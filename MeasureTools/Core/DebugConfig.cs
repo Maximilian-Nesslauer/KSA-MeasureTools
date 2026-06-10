@@ -7,16 +7,13 @@ namespace MeasureTools.Core;
 internal static class DebugConfig
 {
 #if DEBUG
-    // Add one field per feature, e.g.:
-    // public static bool MyFeature = true;
+    // Placement, picking and lifecycle events of the measure tool.
+    public static bool Measure = true;
     public static bool Performance = true;
 #else
-    // Mirror the same fields, all false:
-    // public static bool MyFeature = false;
+    public static bool Measure = false;
     public static bool Performance = false;
 #endif
 
-    public static bool Any => Performance;
-    // Update Any to OR all feature flags together, e.g.:
-    // public static bool Any => MyFeature || Performance;
+    public static bool Any => Measure || Performance;
 }

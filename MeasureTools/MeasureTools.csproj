@@ -29,6 +29,10 @@
       <HintPath>..\..\..\refs\game\Brutal.ImGui.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Brutal.Glfw">
+      <HintPath>..\..\..\refs\game\Brutal.Glfw.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <!-- Add more game DLL references as needed:
     <Reference Include="Brutal.Core.Strings">
       <HintPath>..\..\..\refs\game\Brutal.Core.Strings.dll</HintPath>
