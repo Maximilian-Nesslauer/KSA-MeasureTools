@@ -1,0 +1,4 @@
+name = "MeasureTools"
+
+[StarMap]
+EntryAssembly = "MeasureTools"
