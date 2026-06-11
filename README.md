@@ -71,7 +71,7 @@ Required only to build the mod from source. Targets **.NET 10**.
 
 ## Community
 
-Thread on the KSA forums: TBD
+Thread on the KSA forums: https://forums.ahwoo.com/threads/measuretools.992/
 
 ## Check out my other mods
 
