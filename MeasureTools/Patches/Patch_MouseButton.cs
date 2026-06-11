@@ -85,7 +85,7 @@ internal static class Patch_MouseButton
             else if (DebugConfig.Measure)
             {
                 DefaultCategory.Log.Debug(
-                    $"[MeasureTools] Placement click at {mouseViewport} resolved no anchor (plane edge-on?), click consumed.");
+                    $"[MeasureTools] Placement click at {mouseViewport} resolved no anchor (mode {MeasureState.Mode}), click consumed.");
             }
             // Consume the click even when nothing resolved (plane edge-on): while the
             // tool is armed, unmodified left clicks in the map belong to it.

@@ -31,6 +31,10 @@ internal static class MapPicker
     // reference body (or the previous point), the physically meaningful one.
     public static Anchor? Pick(Viewport viewport, float2 mouseViewport, bool eclipticFree = false)
     {
+        // Surface mode has its own picking: ray versus the celestial spheres, no
+        // body/orbit snapping and no free placement.
+        if (MeasureState.Mode == MeasureMode.Surface)
+            return PickSurface(viewport, mouseViewport);
         if (MeasureState.SnapEnabled && !eclipticFree)
         {
             Anchor? body = PickBody(viewport, mouseViewport);
@@ -45,6 +49,51 @@ internal static class MapPicker
 
     // The eclipticFree flag flows through Pick, PickFreePoint and TryGetFreePlane
     // under this one name: ctrl held, skip snapping, use the ecliptic plane.
+
+    // Surface mode: cast the cursor ray against the mean-radius sphere of every
+    // celestial (nearest hit wins) and pin the hit as lat/lon in the body-fixed
+    // frame, so it tracks rotation like a ground marker. Once the first pin is
+    // down, only its body is a valid target; the great-circle math needs both
+    // points on one sphere.
+    private static Anchor? PickSurface(Viewport viewport, float2 mouseViewport)
+    {
+        CelestialSystem? system = Universe.CurrentSystem;
+        if (system == null)
+            return null;
+        Camera camera = viewport.GetCamera();
+        Ray ray = camera.ScreenToEgoRay(mouseViewport);
+        Celestial? required = MeasureState.Pending.Count > 0
+            ? MeasureState.Pending[0].Body as Celestial
+            : null;
+
+        Celestial? best = null;
+        double bestT = double.MaxValue;
+        foreach (Astronomical astronomical in system.All.AsSpan())
+        {
+            if (astronomical is not Celestial celestial)
+                continue;
+            if (required != null && celestial != required)
+                continue;
+            var sphere = new BoundingSphere3D(camera.GetPositionEgo(celestial), celestial.MeanRadius);
+            if (!ray.Raycast(sphere, out double t, out bool inside) || inside || !(t > 0.0))
+                continue;
+            if (t < bestT)
+            {
+                bestT = t;
+                best = celestial;
+            }
+        }
+        if (best == null)
+            return null;
+
+        // Ego axes are ECL axes, so lifting the hit point is a translation by the
+        // camera position; lat/lon then come from the body-fixed frame.
+        double3 hitEcl = camera.PositionEcl + ray.Direction * bestT;
+        double3 hitCce = best.GetPositionCceFromEcl(hitEcl);
+        double latitude = best.GetLatitudeFromCce(hitCce);
+        double longitude = best.GetLongitudeFromCce(hitCce);
+        return Anchor.PinOnSurface(best, latitude, longitude);
+    }
 
     // Unified body snap: discs and dots. The stock HoveredOrbiter flag is not used
     // here (it is a boolean box test that cannot distinguish center from limb); one

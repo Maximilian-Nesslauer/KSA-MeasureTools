@@ -33,7 +33,7 @@ internal static class MeasureState
     // runs them in that order), so the map highlight follows the list hover.
     public static int HighlightIndex = -1;
 
-    public static int PointsNeeded => Mode == MeasureMode.Ruler ? 2 : 3;
+    public static int PointsNeeded => Mode == MeasureMode.Angle ? 3 : 2;
 
     // The tool captures map clicks only while its window is open and the main
     // viewport is in map mode.
@@ -67,9 +67,12 @@ internal static class MeasureState
             Pending.Clear();
             if (DebugConfig.Measure)
             {
-                string value = measurement.Mode == MeasureMode.Ruler
-                    ? $"distance={measurement.DistanceMeters():F1} m"
-                    : $"angle={measurement.AngleRadians() * (180.0 / Math.PI):F3} deg";
+                string value = measurement.Mode switch
+                {
+                    MeasureMode.Ruler => $"distance={measurement.DistanceMeters():F1} m",
+                    MeasureMode.Surface => $"surface distance={measurement.SurfaceDistanceMeters():F1} m, bearing={measurement.BearingDegrees():F1} deg",
+                    _ => $"angle={measurement.AngleRadians() * (180.0 / Math.PI):F3} deg",
+                };
                 DefaultCategory.Log.Debug($"[MeasureTools] Measurement #{Measurements.Count} completed: {value}.");
             }
         }

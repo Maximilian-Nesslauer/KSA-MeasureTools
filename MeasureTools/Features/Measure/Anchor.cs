@@ -1,3 +1,4 @@
+using System.Globalization;
 using Brutal.Numerics;
 using KSA;
 
@@ -13,8 +14,11 @@ internal enum AnchorKind
     // A point on a body's sphere (limb snap), stored as a CCE offset of length
     // MeanRadius. CCE does not rotate with the body, so the point keeps facing the
     // direction it was placed toward instead of tracking a surface feature
-    // (rotating lat/lon pins arrive with the phase 2 surface mode).
+    // (SurfacePin is the rotating variant).
     SurfaceSnap,
+    // A lat/lon pin on a celestial's surface (surface mode). Resolves through the
+    // body-fixed frame, so it tracks the body's rotation like a ground marker.
+    SurfacePin,
     // A free point on the construction plane, stored as a CCE offset from the
     // reference body so it tracks that body instead of drifting off in absolute space.
     FreePoint,
@@ -34,6 +38,10 @@ internal sealed class Anchor
 
     public double3 OffsetCce;
 
+    // SurfacePin only, in degrees, body-fixed frame.
+    public double Latitude;
+    public double Longitude;
+
     public string Label = "";
 
     public double3 ResolveEcl()
@@ -42,6 +50,7 @@ internal sealed class Anchor
         {
             AnchorKind.BodyCenter => Body!.GetPositionEcl(),
             AnchorKind.OrbitPoint => OrbitParent!.GetPositionEclFromCce(OffsetCce),
+            AnchorKind.SurfacePin => ((Celestial)Body!).GetPositionEclFromLatLon(Latitude, Longitude),
             _ => Body!.GetPositionEclFromCce(OffsetCce),
         };
     }
@@ -83,6 +92,18 @@ internal sealed class Anchor
         };
     }
 
+    public static Anchor PinOnSurface(Celestial body, double latitudeDeg, double longitudeDeg)
+    {
+        return new Anchor
+        {
+            Kind = AnchorKind.SurfacePin,
+            Body = body,
+            Latitude = latitudeDeg,
+            Longitude = longitudeDeg,
+            Label = body.Id + " " + FormatLatLon(latitudeDeg, longitudeDeg),
+        };
+    }
+
     public static Anchor Free(Astronomical refBody, double3 offsetCce)
     {
         return new Anchor
@@ -92,5 +113,13 @@ internal sealed class Anchor
             OffsetCce = offsetCce,
             Label = "free (" + refBody.Id + ")",
         };
+    }
+
+    private static string FormatLatLon(double latDeg, double lonDeg)
+    {
+        string ns = latDeg >= 0.0 ? "N" : "S";
+        string ew = lonDeg >= 0.0 ? "E" : "W";
+        return Math.Abs(latDeg).ToString("0.00", CultureInfo.InvariantCulture) + ns + " "
+            + Math.Abs(lonDeg).ToString("0.00", CultureInfo.InvariantCulture) + ew;
     }
 }

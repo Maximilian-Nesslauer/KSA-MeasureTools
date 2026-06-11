@@ -24,6 +24,7 @@ internal static class MeasureOverlay
 
     private const float ArcPx = 36f;
     private const int PlaneSegments = 64;
+    private const int SurfaceArcSegments = 48;
 
     // The hover preview re-picks only every Nth frame: the orbit scan in
     // MapPicker.PickOrbitPoint costs ~1.6 ms per call on the main thread (measured
@@ -77,7 +78,11 @@ internal static class MeasureOverlay
     {
         byte4 color = highlighted ? HighlightColor : MeasureColor;
         float thickness = highlighted ? 3.5f : 2f;
-        if (m.Mode == MeasureMode.Ruler)
+        if (m.Mode == MeasureMode.Surface)
+        {
+            DrawSurfaceMeasurement(dl, camera, vpPos, m, color, thickness);
+        }
+        else if (m.Mode == MeasureMode.Ruler)
         {
             float2 a = Project(camera, vpPos, m.Anchors[0]);
             float2 b = Project(camera, vpPos, m.Anchors[1]);
@@ -106,6 +111,109 @@ internal static class MeasureOverlay
             Label(dl, SegmentLabelPos(apex, a), FormatDistance((m.Anchors[0].ResolveEcl() - apexEcl).Length()));
             Label(dl, SegmentLabelPos(apex, b), FormatDistance((m.Anchors[2].ResolveEcl() - apexEcl).Length()));
         }
+    }
+
+    // Surface measurement: the great-circle arc over the body, pins at both ends,
+    // the great-circle distance as the headline and chord plus initial bearing as
+    // a second label line.
+    private static void DrawSurfaceMeasurement(ImDrawListPtr dl, Camera camera, float2 vpPos, Measurement m, byte4 color, float thickness)
+    {
+        if (m.Anchors[0].Body is not Celestial body)
+            return;
+        double3 centerEcl = body.GetPositionEcl();
+        double3 aEcl = m.Anchors[0].ResolveEcl();
+        double3 bEcl = m.Anchors[1].ResolveEcl();
+        DrawGreatCircleArc(dl, camera, vpPos, centerEcl, aEcl, bEcl, color, thickness);
+
+        float2 a = vpPos + camera.EclToScreen(aEcl);
+        float2 b = vpPos + camera.EclToScreen(bEcl);
+        if (Valid(a))
+            Dot(dl, a, color);
+        if (Valid(b))
+            Dot(dl, b, color);
+
+        float2 labelAnchor = GreatCircleMidScreen(camera, vpPos, centerEcl, aEcl, bEcl);
+        if (!Valid(labelAnchor))
+            return;
+        var labelPos = new float2(labelAnchor.X + 10f, labelAnchor.Y - 32f);
+        Label(dl, labelPos, FormatDistance(m.SurfaceDistanceMeters()));
+        string detail = "chord " + FormatDistance((aEcl - bEcl).Length())
+            + "  brg " + m.BearingDegrees().ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " deg";
+        Label(dl, new float2(labelPos.X, labelPos.Y + 15f), detail);
+    }
+
+    // The great-circle arc between two surface points, sampled along the sphere and
+    // occlusion-culled: samples on the far hemisphere (facing away from the camera)
+    // break the polyline instead of drawing through the planet disc.
+    private static void DrawGreatCircleArc(ImDrawListPtr dl, Camera camera, float2 vpPos, double3 centerEcl, double3 aEcl, double3 bEcl, byte4 color, float thickness)
+    {
+        double3 da = aEcl - centerEcl;
+        double3 db = bEcl - centerEcl;
+        double ra = da.Length();
+        double rb = db.Length();
+        if (!(ra > 0.0) || !(rb > 0.0))
+            return;
+        double3 ua = da * (1.0 / ra);
+        double3 ub = db * (1.0 / rb);
+        double angle = Math.Acos(Math.Clamp(double3.Dot(ua, ub), -1.0, 1.0));
+        double3 axis = double3.Cross(ua, ub).NormalizeOrZero();
+        if (angle < 1e-9 || (axis.X == 0.0 && axis.Y == 0.0 && axis.Z == 0.0))
+        {
+            // Coincident or antipodal points: no unique great circle, draw nothing
+            // (the endpoint dots and the label still render).
+            return;
+        }
+
+        float2 prev = default;
+        bool hasPrev = false;
+        for (int i = 0; i <= SurfaceArcSegments; i++)
+        {
+            double t = (double)i / SurfaceArcSegments;
+            double3 dir = Rotate(ua, axis, angle * t);
+            double radius = ra + (rb - ra) * t;
+            double3 pointEcl = centerEcl + dir * radius;
+            // Visible while the surface normal faces the camera.
+            bool facing = double3.Dot(dir, camera.PositionEcl - pointEcl) > 0.0;
+            float2 s = vpPos + camera.EclToScreen(pointEcl);
+            if (facing && Valid(s))
+            {
+                if (hasPrev)
+                    dl.AddLine(in prev, in s, color, thickness);
+                prev = s;
+                hasPrev = true;
+            }
+            else
+            {
+                hasPrev = false;
+            }
+        }
+    }
+
+    // Screen position of the arc's halfway point, for label placement.
+    private static float2 GreatCircleMidScreen(Camera camera, float2 vpPos, double3 centerEcl, double3 aEcl, double3 bEcl)
+    {
+        double3 da = aEcl - centerEcl;
+        double3 db = bEcl - centerEcl;
+        double ra = da.Length();
+        double rb = db.Length();
+        if (!(ra > 0.0) || !(rb > 0.0))
+            return new float2(float.NaN, float.NaN);
+        double3 ua = da * (1.0 / ra);
+        double3 ub = db * (1.0 / rb);
+        double angle = Math.Acos(Math.Clamp(double3.Dot(ua, ub), -1.0, 1.0));
+        double3 axis = double3.Cross(ua, ub).NormalizeOrZero();
+        if (axis.X == 0.0 && axis.Y == 0.0 && axis.Z == 0.0)
+            return vpPos + camera.EclToScreen(aEcl);
+        double3 mid = Rotate(ua, axis, angle * 0.5);
+        return vpPos + camera.EclToScreen(centerEcl + mid * ((ra + rb) * 0.5));
+    }
+
+    // Rodrigues' rotation about a unit axis (DeltaVMap pattern).
+    private static double3 Rotate(double3 v, double3 axis, double angle)
+    {
+        double c = Math.Cos(angle);
+        double s = Math.Sin(angle);
+        return v * c + double3.Cross(axis, v) * s + axis * (double3.Dot(axis, v) * (1.0 - c));
     }
 
     // The hover preview while armed: the snap highlight under the cursor, the
@@ -171,6 +279,20 @@ internal static class MeasureOverlay
             double meters = (pending[0].ResolveEcl() - preview.ResolveEcl()).Length();
             Label(dl, SegmentLabelPos(a, cursor), FormatDistance(meters));
         }
+        else if (MeasureState.Mode == MeasureMode.Surface)
+        {
+            // One pending pin: live great-circle arc with the live distance.
+            if (preview.Kind == AnchorKind.SurfacePin
+                && pending[0].Body is Celestial body
+                && ReferenceEquals(preview.Body, body))
+            {
+                double3 centerEcl = body.GetPositionEcl();
+                DrawGreatCircleArc(dl, camera, vpPos, centerEcl, pending[0].ResolveEcl(), preview.ResolveEcl(), PendingColor, 1.6f);
+                double meters = Measurement.GreatCircleMeters(
+                    body, pending[0].Latitude, pending[0].Longitude, preview.Latitude, preview.Longitude);
+                Label(dl, SegmentLabelPos(pendingScreen[0], cursor), FormatDistance(meters));
+            }
+        }
         else if (pending.Count == 1)
         {
             // Arm placed, cursor previews the apex: live arm length.
@@ -213,6 +335,11 @@ internal static class MeasureOverlay
             case AnchorKind.SurfaceSnap:
                 DrawLimbRing(dl, camera, vpPos, preview);
                 dl.AddCircleFilled(in cursor, 5f, PreviewColor);
+                Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f), preview.Label);
+                break;
+            case AnchorKind.SurfacePin:
+                dl.AddCircleFilled(in cursor, 4f, PreviewColor);
+                dl.AddCircle(in cursor, 8f, PreviewColor, 20, 1.5f);
                 Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f), preview.Label);
                 break;
             default:

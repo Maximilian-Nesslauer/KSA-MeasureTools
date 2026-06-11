@@ -92,6 +92,9 @@ internal sealed class MeasureWindow : ImGuiWindow
         ImGui.SameLine();
         if (ImGui.RadioButton("Protractor"u8, MeasureState.Mode == MeasureMode.Angle))
             MeasureState.SetMode(MeasureMode.Angle);
+        ImGui.SameLine();
+        if (ImGui.RadioButton("Surface"u8, MeasureState.Mode == MeasureMode.Surface))
+            MeasureState.SetMode(MeasureMode.Surface);
 
         bool snap = MeasureState.SnapEnabled;
         if (ImGui.Checkbox("Snap to bodies and orbit lines"u8, ref snap))
@@ -131,17 +134,29 @@ internal sealed class MeasureWindow : ImGuiWindow
         if (viewport.Mode != CameraMode.Map)
             return;
         int have = MeasureState.Pending.Count;
-        string status = MeasureState.Mode == MeasureMode.Ruler
-            ? (have == 0 ? "Click in the map: place the first point" : "Click in the map: place the second point")
-            : have switch
+        string status = MeasureState.Mode switch
+        {
+            MeasureMode.Ruler => have == 0 ? "Click in the map: place the first point" : "Click in the map: place the second point",
+            MeasureMode.Surface => have == 0
+                ? "Click on a body: place the first surface point"
+                : "Click the same body: place the second surface point",
+            _ => have switch
             {
                 0 => "Click in the map: place the first arm",
                 1 => "Click in the map: place the apex",
                 _ => "Click in the map: place the second arm",
-            };
+            },
+        };
         ImGui.Text(status);
-        ImGui.TextDisabled("Free clicks land on the camera plane."u8);
-        ImGui.TextDisabled("Ctrl-click: free point on the ecliptic plane."u8);
+        if (MeasureState.Mode == MeasureMode.Surface)
+        {
+            ImGui.TextDisabled("Points pin to the surface and track the body's rotation."u8);
+        }
+        else
+        {
+            ImGui.TextDisabled("Free clicks land on the camera plane."u8);
+            ImGui.TextDisabled("Ctrl-click: free point on the ecliptic plane."u8);
+        }
         ImGui.TextDisabled("Short right-click: cancel point."u8);
         if (have > 0 && ImGui.SmallButton("Cancel point placement"u8))
             MeasureState.CancelPending();
@@ -154,7 +169,11 @@ internal sealed class MeasureWindow : ImGuiWindow
         {
             ImGui.SameLine();
             if (ImGui.SmallButton("Clear all"u8))
+            {
+                if (DebugConfig.Measure)
+                    DefaultCategory.Log.Debug($"[MeasureTools] Clear all: dropping {MeasureState.Measurements.Count} measurement(s).");
                 MeasureState.ClearAll();
+            }
         }
 
         // Hover sync: rebuilt every frame; the overlay draws right after this and
@@ -192,6 +211,10 @@ internal sealed class MeasureWindow : ImGuiWindow
             {
                 value = new string(DistanceReference.ToNearest(m.DistanceMeters(), buffer));
             }
+            else if (m.Mode == MeasureMode.Surface)
+            {
+                value = new string(DistanceReference.ToNearest(m.SurfaceDistanceMeters(), buffer));
+            }
             else
             {
                 double angle = m.AngleRadians();
@@ -210,7 +233,7 @@ internal sealed class MeasureWindow : ImGuiWindow
             }
 
             ImGui.TableNextColumn();
-            string endpoints = m.Mode == MeasureMode.Ruler
+            string endpoints = m.Anchors.Length == 2
                 ? m.Anchors[0].Label + " - " + m.Anchors[1].Label
                 : m.Anchors[0].Label + " - " + m.Anchors[1].Label + " - " + m.Anchors[2].Label;
             ImGui.Text(endpoints);
@@ -222,6 +245,10 @@ internal sealed class MeasureWindow : ImGuiWindow
         }
         ImGui.EndTable();
         if (removeAt >= 0)
+        {
             MeasureState.Measurements.RemoveAt(removeAt);
+            if (DebugConfig.Measure)
+                DefaultCategory.Log.Debug($"[MeasureTools] Measurement #{removeAt + 1} removed via list.");
+        }
     }
 }
