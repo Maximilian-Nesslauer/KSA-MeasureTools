@@ -40,7 +40,7 @@ resume. Measurements are not saved to the save file; closing the window clears t
 ## Installation
 
 1. Install [StarMap](https://github.com/StarMapLoader/StarMap).
-2. Download the latest release from the [GitHub Releases](https://github.com/Maximilian-Nesslauer/KSA-MeasureTools/releases) tab or from [SpaceDock](https://spacedock.info/mod/XXXX/MeasureTools).
+2. Download the latest release from the [GitHub Releases](https://github.com/Maximilian-Nesslauer/KSA-MeasureTools/releases) tab or from [SpaceDock](https://spacedock.info/mod/4319/MeasureTools).
 3. Extract into `Documents\My Games\Kitten Space Agency\mods\MeasureTools\`.
 4. The game auto-discovers new mods and prompts you to enable them. Alternatively, add to `Documents\My Games\Kitten Space Agency\manifest.toml`:
 
