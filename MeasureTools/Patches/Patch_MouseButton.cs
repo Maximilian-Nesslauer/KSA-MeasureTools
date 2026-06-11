@@ -16,7 +16,8 @@ namespace MeasureTools.Patches;
 // is untouched: the map camera pans/rotates with middle/right drag only
 // (MapController.OnMouseButton), and modified clicks pass through so shift-click
 // target setting keeps working. A short right click (press and release without
-// movement) cancels the in-progress placement; a real right drag still rotates.
+// movement) cancels the in-progress placement, or pauses the tool when nothing is
+// pending; a real right drag still rotates.
 [HarmonyPatch(typeof(Program), nameof(Program.OnMouseButton))]
 internal static class Patch_MouseButton
 {
@@ -54,14 +55,22 @@ internal static class Patch_MouseButton
             {
                 if (action == GlfwButtonAction.Press)
                 {
-                    _rightPressPending = MeasureState.Pending.Count > 0;
+                    _rightPressPending = true;
                     _rightPressPos = ImGui.GetIO().MousePos;
                 }
                 else if (action == GlfwButtonAction.Release && _rightPressPending)
                 {
                     _rightPressPending = false;
                     if (float2.Distance(ImGui.GetIO().MousePos, _rightPressPos) < 4f)
-                        MeasureState.CancelPending();
+                    {
+                        // Short right-click: cancel the in-progress placement, or
+                        // pause the tool when nothing is pending so the game plays
+                        // normally with the window still open.
+                        if (MeasureState.Pending.Count > 0)
+                            MeasureState.CancelPending();
+                        else
+                            MeasureState.SetToolActive(false);
+                    }
                 }
                 return true;
             }

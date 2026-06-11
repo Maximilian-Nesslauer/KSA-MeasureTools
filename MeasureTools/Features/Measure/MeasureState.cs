@@ -35,12 +35,33 @@ internal static class MeasureState
 
     public static int PointsNeeded => Mode == MeasureMode.Angle ? 3 : 2;
 
-    // The tool captures map clicks only while its window is open and the main
-    // viewport is in map mode.
+    // Whether the tool currently captures map clicks. The window can stay open
+    // with the tool paused (short right-click with nothing pending), so the game
+    // plays normally while the measurements stay visible.
+    public static bool ToolActive = true;
+
+    // The tool captures map clicks only while its window is open, the tool is not
+    // paused, and the main viewport is in map mode.
     public static bool IsArmed =>
-        MeasureWindow.IsOpen
+        ToolActive
+        && MeasureWindow.IsOpen
         && Universe.CurrentSystem != null
         && Program.MainViewport.Mode == CameraMode.Map;
+
+    public static void SetToolActive(bool active)
+    {
+        if (ToolActive == active)
+            return;
+        ToolActive = active;
+        // Pausing drops a half-finished placement; settled measurements stay.
+        if (!active)
+            Pending.Clear();
+        StateVersion++;
+        if (DebugConfig.Measure)
+            DefaultCategory.Log.Debug(active
+                ? "[MeasureTools] Measuring resumed."
+                : "[MeasureTools] Measuring paused, clicks pass through to the game.");
+    }
 
     public static void SetMode(MeasureMode mode)
     {
@@ -169,6 +190,7 @@ internal static class MeasureState
     {
         Mode = MeasureMode.Ruler;
         SnapEnabled = true;
+        ToolActive = true;
         ReferenceOverride = null;
         HighlightIndex = -1;
         Pending.Clear();

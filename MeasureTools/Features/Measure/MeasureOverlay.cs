@@ -20,7 +20,7 @@ internal static class MeasureOverlay
     private static readonly byte4 PreviewFaint = new byte4(255, 220, 110, 80);
     private static readonly byte4 PlaneColor = new byte4(150, 170, 200, 70);
     private static readonly byte4 LabelColor = new byte4(236, 234, 222, 255);
-    private static readonly byte4 LabelShadow = new byte4(0, 0, 0, 205);
+    private static readonly byte4 LabelPlate = new byte4(8, 12, 16, 175);
 
     private const float ArcPx = 36f;
     private const int PlaneSegments = 64;
@@ -488,8 +488,12 @@ internal static class MeasureOverlay
 
     private static void Label(ImDrawListPtr dl, float2 pos, string text)
     {
-        var shadow = new float2(pos.X + 1f, pos.Y + 1f);
-        dl.AddText(in shadow, LabelShadow, text);
+        // Background plate so labels stay readable over orbit lines, planet discs
+        // and other labels.
+        float2 size = ImGui.CalcTextSize(text);
+        var pMin = new float2(pos.X - 4f, pos.Y - 2f);
+        var pMax = new float2(pos.X + size.X + 4f, pos.Y + size.Y + 2f);
+        dl.AddRectFilled(in pMin, in pMax, LabelPlate, 3f);
         dl.AddText(in pos, LabelColor, text);
     }
 
