@@ -4,15 +4,38 @@ Click-to-measure ruler and protractor tools for [Kitten Space Agency](https://ah
 
 This mod is written against the [StarMap loader](https://github.com/StarMapLoader/StarMap).
 
+![Measuring in the map view](images/MeasureTools.png)
+
 ## Features
 
-- **Ruler** - click two points in map view to measure the straight-line distance. Snaps to
-  bodies and to points on orbit lines, or places free points on a reference plane.
-- **Protractor** - click three points (arm, apex, arm) to read the true 3D angle, e.g. the
-  phase angle between two planets around their star.
-- **Surface measuring** - great-circle distance, chord, and bearing between two points
-  on a planet surface.
-- **Editor measuring** - distances between points on parts in the vehicle editor.
+- **Ruler** - click two points in the map view to measure the straight-line distance.
+  Snaps to bodies, to body surfaces (the edge of a planet's disc), and to points on
+  orbit lines; clicks on empty space place free points.
+- **Protractor** - click three points (arm, apex, arm) to read the true 3D angle plus
+  both arm lengths, e.g. the phase angle between two planets around their star.
+- **Surface** - pin two points to a planet's surface for the great-circle distance,
+  chord, and initial bearing; pins track the body's rotation like ground markers.
+- **Live preview** with snap highlighting, hover-sync between the list and the map,
+  and click-to-copy values.
+
+Planned: measuring in the vehicle editor, waiting for the upcoming editor rework
+([#1](https://github.com/Maximilian-Nesslauer/KSA-MeasureTools/issues/1)).
+
+## Usage
+
+In the map view, open **View -> Measure**, pick a tool (Ruler, Protractor, Surface)
+and click in the map to place points.
+
+| Input | Action |
+| --- | --- |
+| Left-click | Place a point (snaps to bodies, disc edges, and orbit lines) |
+| Ctrl + left-click | Place a free point on the ecliptic plane through the reference body |
+| Short right-click | Cancel the current point, or pause measuring when nothing is pending |
+| Click a list row | Copy the measurement to the clipboard |
+
+Free clicks that snap to nothing land on the camera-facing plane. While measuring is
+paused, no tool is selected and all clicks pass through to the game; pick a tool to
+resume. Measurements are not saved to the save file; closing the window clears them.
 
 ## Installation
 
