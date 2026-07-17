@@ -59,6 +59,9 @@ public sealed class Mod
     {
         try
         {
+#if DEBUG
+            using var perfScope = new PerfTracker.Scope("Mod.Draw");
+#endif
             MeasureState.Prune();
             Viewport viewport = Program.MainViewport;
             if (viewport == null)

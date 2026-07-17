@@ -1,3 +1,4 @@
+using Brutal.GlfwApi;
 using Brutal.Numerics;
 using KSA;
 using MeasureTools.Core;
@@ -51,7 +52,12 @@ internal static class MapPicker
     // plane (always exactly under the cursor). With eclipticFree (ctrl held) all
     // snapping is skipped and the point lands on the ecliptic plane through the
     // reference body (or the previous point), the physically meaningful one.
-    public static Anchor? Pick(Viewport viewport, float2 mouseViewport, bool eclipticFree = false)
+    // reuseStockHover lets the throttled hover preview opt into this frame's
+    // stock hover raycast (flight Orbit view only). Placement clicks keep the
+    // default full scan: input callbacks run before the frame's UI draw, where
+    // the stock value is still a frame stale, so forgetting the flag costs a
+    // redundant scan instead of a wrong pick.
+    public static Anchor? Pick(Viewport viewport, float2 mouseViewport, bool eclipticFree = false, bool reuseStockHover = false)
     {
         // Surface mode has its own picking: ray versus the celestial spheres, no
         // body/orbit snapping and no free placement. FaceAngle picks raw part
@@ -60,14 +66,14 @@ internal static class MapPicker
         if (MeasureState.Mode == MeasureMode.Surface)
             return PickSurface(viewport, mouseViewport);
         if (MeasureState.Mode == MeasureMode.FaceAngle)
-            return PickFaceAngle(viewport, mouseViewport);
+            return PickFaceAngle(viewport, mouseViewport, reuseStockHover);
         if (MeasureState.Mode == MeasureMode.Circle)
             return null;
         if (MeasureState.SnapEnabled && !eclipticFree)
         {
             if (MeasureState.PartSnapEnabled)
             {
-                Anchor? partPoint = PickPart(viewport, mouseViewport);
+                Anchor? partPoint = PickPart(viewport, mouseViewport, reuseStockHover);
                 if (partPoint != null)
                     return partPoint;
             }
@@ -168,7 +174,7 @@ internal static class MapPicker
     // projects large enough, with a bounding-sphere pre-check per vehicle.
     // Optionally collects point-feature candidates along the way so PickPart
     // shares the vehicle gating with the mode-specific pickers.
-    private static bool TryGetMeshHit(Viewport viewport, float2 mouseViewport, bool scanFeatures,
+    private static bool TryGetMeshHit(Viewport viewport, float2 mouseViewport, bool scanFeatures, bool reuseStockHover,
         ref FeatureCandidate feature, out Camera camera, out Vehicle? hitVehicle, out PartHit hit)
     {
         camera = viewport.GetCamera();
@@ -199,6 +205,49 @@ internal static class MapPicker
         CelestialSystem? system = Universe.CurrentSystem;
         if (system == null)
             return false;
+
+        // Preview picks in the flight Orbit view reuse the stock hover raycast:
+        // Vehicle.UpdateHighlight has already watertight-raycast every drawn
+        // vehicle's parts this frame and stored the globally nearest full part
+        // in Viewport.ClosestHoveredPart (CelestialSystem.OnDrawUi resets it
+        // before the draw loop, and [StarMapAfterGui] runs after it), so a full
+        // scan here would duplicate that work. The cursor-mode clause mirrors
+        // stock's own gate: during camera drags Vehicle.UpdateHighlight never
+        // runs and the field stays null WITHOUT meaning "no part there".
+        bool hoverShortcut = reuseStockHover
+            && viewport == Program.MainViewport
+            && viewport.Mode == CameraMode.Orbit
+            && Program.GetCursorMode() == GlfwCursorMode.Normal;
+        Part? stockHovered = hoverShortcut ? viewport.ClosestHoveredPart : null;
+
+        // With the shortcut active and stock reporting no hovered part, every
+        // mesh raycast is a guaranteed miss; without a feature scan to run there
+        // is nothing left to do. Accepted gap, documented: stock skips vehicles
+        // failing its FOV check (unless controlled or targeted), so a
+        // screen-edge vehicle the old full scan could hit stays invisible to
+        // the shortcut; placement clicks still full-scan.
+        if (hoverShortcut && stockHovered == null && !scanFeatures)
+            return false;
+
+        ScanFlightVehicles(system, camera, mouseViewport, ray, scanFeatures, hoverShortcut, stockHovered,
+            ref feature, ref hit, ref hitVehicle);
+        if (hoverShortcut && stockHovered != null && hit.SubPart == null)
+        {
+            // The single-part re-raycast can miss what stock reported: sub-frame
+            // cursor drift at a silhouette, or an EVA kitten, whose hover comes
+            // from a bounding-sphere test on a meshless part and can shadow a
+            // vehicle behind it. Re-scan in full (features are already done) so
+            // the preview never degrades below the pre-shortcut path.
+            ScanFlightVehicles(system, camera, mouseViewport, ray, scanFeatures: false, hoverShortcut: false, null,
+                ref feature, ref hit, ref hitVehicle);
+        }
+        return hit.SubPart != null;
+    }
+
+    private static void ScanFlightVehicles(CelestialSystem system, Camera camera, float2 mouseViewport, Ray ray,
+        bool scanFeatures, bool hoverShortcut, Part? stockHovered,
+        ref FeatureCandidate feature, ref PartHit hit, ref Vehicle? hitVehicle)
+    {
         foreach (Astronomical astronomical in system.All.AsSpan())
         {
             if (astronomical is not Vehicle vehicle)
@@ -225,18 +274,31 @@ internal static class MapPicker
                     feature.Vehicle = vehicle;
             }
 
+            if (hoverShortcut)
+            {
+                // Only the stock-hovered part is re-raycast, and only when its
+                // vehicle passed the size gate above (stock hover has no
+                // minimum projected size).
+                if (stockHovered == null || !ReferenceEquals(stockHovered.Tree, tree))
+                    continue;
+                double hitDistanceBefore = hit.Distance;
+                RaycastPart(stockHovered, in matrixVehicleAsmb2Ego, ray, ref hit);
+                if (hit.Distance < hitDistanceBefore)
+                    hitVehicle = vehicle;
+                continue;
+            }
+
             // Sphere gate before the per-part mesh raycasts; slight padding so a
             // hull point right at the bounding sphere still passes.
             var sphere = new BoundingSphere3D(vehiclePosEgo, radius * 1.1);
             if (!ray.Raycast(sphere, out _, out _))
                 continue;
 
-            double hitDistanceBefore = hit.Distance;
+            double hitDistanceBeforeSpan = hit.Distance;
             RaycastPartSpan(tree.Parts, in matrixVehicleAsmb2Ego, ray, ref hit);
-            if (hit.Distance < hitDistanceBefore)
+            if (hit.Distance < hitDistanceBeforeSpan)
                 hitVehicle = vehicle;
         }
-        return hit.SubPart != null;
     }
 
     // Builds the flight or editor variant of a part anchor; the editor is the
@@ -263,13 +325,13 @@ internal static class MapPicker
     // closest point on a feature edge > the raw watertight surface hit, which is
     // always exactly under the cursor and so stays the fallback. No result falls
     // through to the body/orbit/free picking.
-    private static Anchor? PickPart(Viewport viewport, float2 mouseViewport)
+    private static Anchor? PickPart(Viewport viewport, float2 mouseViewport, bool reuseStockHover)
     {
 #if DEBUG
         using var perfScope = new PerfTracker.Scope("MapPicker.PickPart");
 #endif
         var feature = new FeatureCandidate { ScreenDist = PartFeatureSnapRadiusPx };
-        bool hasHit = TryGetMeshHit(viewport, mouseViewport, MeasureState.PartFeatureSnapEnabled,
+        bool hasHit = TryGetMeshHit(viewport, mouseViewport, MeasureState.PartFeatureSnapEnabled, reuseStockHover,
             ref feature, out Camera camera, out Vehicle? hitVehicle, out PartHit hit);
 
         // The hit subpart's feature set is resolved once and threaded through the
@@ -312,7 +374,7 @@ internal static class MapPicker
     // Circle mode: one click on a circular feature edge. Produces the fitted
     // center (carrying the circle plane normal) plus the ring point nearest the
     // hit, both as part anchors; radius/diameter derive live from the pair.
-    public static bool PickCircle(Viewport viewport, float2 mouseViewport, out Anchor? center, out Anchor? rim)
+    public static bool PickCircle(Viewport viewport, float2 mouseViewport, out Anchor? center, out Anchor? rim, bool reuseStockHover = false)
     {
 #if DEBUG
         using var perfScope = new PerfTracker.Scope("MapPicker.PickCircle");
@@ -320,7 +382,7 @@ internal static class MapPicker
         center = null;
         rim = null;
         var unusedFeature = new FeatureCandidate();
-        if (!TryGetMeshHit(viewport, mouseViewport, scanFeatures: false, ref unusedFeature,
+        if (!TryGetMeshHit(viewport, mouseViewport, scanFeatures: false, reuseStockHover, ref unusedFeature,
                 out Camera camera, out Vehicle? hitVehicle, out PartHit hit)
             || hit.SubPart == null || hit.FullPart == null)
             return false;
@@ -364,10 +426,10 @@ internal static class MapPicker
 
     // FaceAngle mode: the raw surface hit only; snapping to points would move
     // the sample off the face whose normal is being measured.
-    private static Anchor? PickFaceAngle(Viewport viewport, float2 mouseViewport)
+    private static Anchor? PickFaceAngle(Viewport viewport, float2 mouseViewport, bool reuseStockHover)
     {
         var unusedFeature = new FeatureCandidate();
-        if (!TryGetMeshHit(viewport, mouseViewport, scanFeatures: false, ref unusedFeature,
+        if (!TryGetMeshHit(viewport, mouseViewport, scanFeatures: false, reuseStockHover, ref unusedFeature,
                 out _, out Vehicle? hitVehicle, out PartHit hit)
             || hit.SubPart == null || hit.FullPart == null)
             return null;
@@ -505,19 +567,25 @@ internal static class MapPicker
     // keeping the globally nearest hit in `hit`.
     private static void RaycastPartSpan(ReadOnlySpan<Part> parts, ref readonly double4x4 matrixVehicleAsmb2Ego, Ray ray, ref PartHit hit)
     {
+#if DEBUG
+        using var perfScope = new PerfTracker.Scope("MapPicker.RaycastPartSpan");
+#endif
         for (int i = 0; i < parts.Length; i++)
+            RaycastPart(parts[i], in matrixVehicleAsmb2Ego, ray, ref hit);
+    }
+
+    private static void RaycastPart(Part part, ref readonly double4x4 matrixVehicleAsmb2Ego, Ray ray, ref PartHit hit)
+    {
+        if (part.RayCastEgo(in matrixVehicleAsmb2Ego, ray, out double minDistance, out _,
+                out double3 nearLocal, out double3 nearNormal, out _, out _, out Part? closestSubPart, out _)
+            && minDistance > 0.0 && minDistance < hit.Distance && closestSubPart != null)
         {
-            if (parts[i].RayCastEgo(in matrixVehicleAsmb2Ego, ray, out double minDistance, out _,
-                    out double3 nearLocal, out double3 nearNormal, out _, out _, out Part? closestSubPart, out _)
-                && minDistance > 0.0 && minDistance < hit.Distance && closestSubPart != null)
-            {
-                hit.FullPart = parts[i];
-                hit.SubPart = closestSubPart;
-                hit.LocalPos = nearLocal;
-                hit.NormalLocal = nearNormal;
-                hit.Distance = minDistance;
-                hit.Matrix = matrixVehicleAsmb2Ego;
-            }
+            hit.FullPart = part;
+            hit.SubPart = closestSubPart;
+            hit.LocalPos = nearLocal;
+            hit.NormalLocal = nearNormal;
+            hit.Distance = minDistance;
+            hit.Matrix = matrixVehicleAsmb2Ego;
         }
     }
 
@@ -531,6 +599,9 @@ internal static class MapPicker
     private static void ScanPartFeatures(Camera camera, float2 mouseViewport, ReadOnlySpan<Part> parts,
         ref readonly double4x4 matrixVehicleAsmb2Ego, ref FeatureCandidate best)
     {
+#if DEBUG
+        using var perfScope = new PerfTracker.Scope("MapPicker.ScanPartFeatures");
+#endif
         for (int i = 0; i < parts.Length; i++)
         {
             Part part = parts[i];

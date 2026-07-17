@@ -44,6 +44,7 @@ internal sealed class MeasureWindow : ImGuiWindow
         if (!_instance.IsShown)
         {
             MeasureState.ClearAll();
+            _instance.ResetAutoPreview();
             if (DebugConfig.Measure)
                 DefaultCategory.Log.Debug("[MeasureTools] Tool closed via title bar, measurements cleared.");
         }
@@ -69,8 +70,17 @@ internal sealed class MeasureWindow : ImGuiWindow
         _show = false;
         // Ephemeral by design: leaving the tool clears all measurements.
         MeasureState.ClearAll();
+        ResetAutoPreview();
         if (DebugConfig.Measure)
             DefaultCategory.Log.Debug("[MeasureTools] Tool closed, measurements cleared.");
+    }
+
+    // Drops the cached Auto-combo body so a closed window does not keep a body
+    // from an unloaded system alive; the text rebuilds on the next combo draw.
+    private void ResetAutoPreview()
+    {
+        _autoPreviewBody = null;
+        _autoPreviewText = "Auto (none)";
     }
 
     public override void DrawContent(Viewport viewport)
@@ -160,14 +170,38 @@ internal sealed class MeasureWindow : ImGuiWindow
 
         ImGui.SeparatorText("Measurements"u8);
         DrawMeasurementList();
+
+#if DEBUG
+        // Runtime switches for the DebugConfig flags (mutable by design), so
+        // measure/perf logging can be toggled without a rebuild. Performance
+        // logging drives the PerfTracker scopes reporting avg/min/max per 5 s.
+        ImGui.SeparatorText("Debug logging"u8);
+        bool logMeasure = DebugConfig.Measure;
+        if (ImGui.Checkbox("Measure events"u8, ref logMeasure))
+            DebugConfig.Measure = logMeasure;
+        ImGui.SameLine();
+        bool logPerformance = DebugConfig.Performance;
+        if (ImGui.Checkbox("Performance"u8, ref logPerformance))
+            DebugConfig.Performance = logPerformance;
+#endif
     }
+
+    // The "Auto (...)" preview rebuilt only when the resolved body changes, not
+    // per frame; the override case reuses the body's existing Id string.
+    private Astronomical? _autoPreviewBody;
+    private string _autoPreviewText = "Auto (none)";
 
     private void DrawReferenceCombo(Viewport viewport)
     {
         Astronomical? auto = MeasureState.ReferenceOverride == null
             ? MeasureState.ResolveReferenceBody(viewport)
             : null;
-        string preview = MeasureState.ReferenceOverride?.Id ?? "Auto (" + (auto?.Id ?? "none") + ")";
+        if (MeasureState.ReferenceOverride == null && !ReferenceEquals(auto, _autoPreviewBody))
+        {
+            _autoPreviewBody = auto;
+            _autoPreviewText = "Auto (" + (auto?.Id ?? "none") + ")";
+        }
+        string preview = MeasureState.ReferenceOverride?.Id ?? _autoPreviewText;
         if (!ImGui.BeginCombo("Reference"u8, preview))
             return;
         if (ImGui.Selectable("Auto"u8, MeasureState.ReferenceOverride == null))
@@ -233,6 +267,9 @@ internal sealed class MeasureWindow : ImGuiWindow
 
     private void DrawMeasurementList()
     {
+#if DEBUG
+        using var perfScope = new PerfTracker.Scope("MeasureWindow.DrawMeasurementList");
+#endif
         // Hover sync: rebuilt every frame; the overlay draws right after this and
         // brightens the hovered measurement on the map.
         MeasureState.HighlightIndex = -1;
@@ -279,8 +316,6 @@ internal sealed class MeasureWindow : ImGuiWindow
             string endpoints = m.Anchors.Length == 2
                 ? m.Anchors[0].Label + " - " + m.Anchors[1].Label
                 : m.Anchors[0].Label + " - " + m.Anchors[1].Label + " - " + m.Anchors[2].Label;
-            // A click on any cell copies the full data set of the row.
-            string copyText = BuildCopyText(m, value, endpoints, buffer);
 
             // Right-aligned value cell.
             ImGui.PushStyleVar(ImGuiStyleVar.SelectableTextAlign, new float2(1f, 0f));
@@ -294,6 +329,10 @@ internal sealed class MeasureWindow : ImGuiWindow
 
             if (copy)
             {
+                // Built only on the click: the full data set resolves anchors and
+                // concatenates several strings, waste on the 99.9% of frames
+                // where no row is clicked.
+                string copyText = BuildCopyText(m, value, endpoints, buffer);
                 ImGui.SetClipboardText(copyText);
                 if (DebugConfig.Measure)
                     DefaultCategory.Log.Debug($"[MeasureTools] Copied measurement #{i + 1} to clipboard: {copyText}");
@@ -332,11 +371,11 @@ internal sealed class MeasureWindow : ImGuiWindow
         {
             double faceAngle = m.FaceAngleRadians();
             // NaN while a normal cannot resolve (stale owner mid-transition).
-            return double.IsNaN(faceAngle) ? "undefined" : RadianReference.FromRadians(faceAngle).ToStringDegrees();
+            return double.IsNaN(faceAngle) ? "undefined" : new string(RadianReference.FromRadians(faceAngle).ToStringDegrees(buffer));
         }
         double angle = m.AngleRadians();
         // NaN when an arm coincides with the apex (e.g. both on one body).
-        return double.IsNaN(angle) ? "undefined" : RadianReference.FromRadians(angle).ToStringDegrees();
+        return double.IsNaN(angle) ? "undefined" : new string(RadianReference.FromRadians(angle).ToStringDegrees(buffer));
     }
 
     // The clipboard gets the full data set, not just the headline value: arm

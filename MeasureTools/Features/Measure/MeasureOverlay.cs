@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Brutal.ImGuiApi;
 using Brutal.Numerics;
 using KSA;
@@ -30,13 +31,14 @@ internal static class MeasureOverlay
     private const int PlaneSegments = 64;
     private const int SurfaceArcSegments = 48;
 
-    // The hover preview re-picks only every Nth frame: the orbit scan in
-    // MapPicker.PickOrbitPoint costs ~1.6 ms per call on the main thread (measured
-    // on KSA 2026.6.3.4568), and a ~50 ms stale preview is imperceptible. The
+    // The hover preview re-picks on a wall-clock interval: the part mesh raycast
+    // in MapPicker.PickPart costs milliseconds on the main thread, a ~50 ms
+    // stale preview is imperceptible, and a frame-count throttle would scale the
+    // pick rate with the refresh rate (48/s at 144 Hz instead of ~22/s). The
     // placement click always picks fresh, so accuracy is unaffected.
-    private const int PreviewPickIntervalFrames = 3;
-    // Starts at the interval so the very first armed frame picks immediately.
-    private static int _previewFramesSincePick = PreviewPickIntervalFrames;
+    private const double PreviewPickIntervalMs = 45.0;
+    // Zero elapses immediately, so the very first armed frame picks.
+    private static long _previewLastPickTimestamp;
     private static Anchor? _previewCache;
     // Circle mode previews an anchor pair: the ring point in _previewCache, the
     // fitted center here. Null in every other mode.
@@ -47,7 +49,7 @@ internal static class MeasureOverlay
     // Must not touch ImGui (called from [StarMapUnload]).
     public static void Reset()
     {
-        _previewFramesSincePick = PreviewPickIntervalFrames;
+        _previewLastPickTimestamp = 0;
         _previewCache = null;
         _previewCacheSecondary = null;
         _previewStateVersion = -1;
@@ -58,6 +60,9 @@ internal static class MeasureOverlay
     {
         try
         {
+#if DEBUG
+            using var perfScope = new PerfTracker.Scope("MeasureOverlay.Draw");
+#endif
             if (!MeasureWindow.IsOpen)
                 return;
             if (!MeasureState.IsSupportedViewMode(viewport.Mode))
@@ -113,7 +118,7 @@ internal static class MeasureOverlay
             Dot(dl, a, color);
             Dot(dl, b, color);
             float2 labelPos = SegmentLabelPos(a, b);
-            Label(dl, labelPos, FormatDistance((aEcl - bEcl).Length()));
+            LabelDistance(dl, labelPos, (aEcl - bEcl).Length());
             // Same-vehicle part measurements get the CAD-style component line:
             // along the stack axis and perpendicular to it.
             if (m.TryGetAxialRadialMeters(out double axial, out double radial))
@@ -137,8 +142,8 @@ internal static class MeasureOverlay
             Dot(dl, b, color);
             DrawAngleArcAndLabel(dl, apex, a, b, Measurement.AngleBetween(apexEcl, armAEcl, armBEcl), color);
             // Both arms carry their length, like ruler segments.
-            Label(dl, SegmentLabelPos(apex, a), FormatDistance((armAEcl - apexEcl).Length()));
-            Label(dl, SegmentLabelPos(apex, b), FormatDistance((armBEcl - apexEcl).Length()));
+            LabelDistance(dl, SegmentLabelPos(apex, a), (armAEcl - apexEcl).Length());
+            LabelDistance(dl, SegmentLabelPos(apex, b), (armBEcl - apexEcl).Length());
         }
     }
 
@@ -178,9 +183,7 @@ internal static class MeasureOverlay
         if (!Valid(a) || !Valid(b))
             return;
         dl.AddLine(in a, in b, color, 1f);
-        double angle = m.FaceAngleRadians();
-        Label(dl, SegmentLabelPos(a, b),
-            double.IsNaN(angle) ? "undefined" : RadianReference.FromRadians(angle).ToStringDegrees());
+        LabelDegrees(dl, SegmentLabelPos(a, b), m.FaceAngleRadians());
     }
 
     // A 3D circle from its center, a radius vector in the plane, and the plane
@@ -257,7 +260,7 @@ internal static class MeasureOverlay
         if (!Valid(labelAnchor))
             return;
         var labelPos = new float2(labelAnchor.X + 10f, labelAnchor.Y - 32f);
-        Label(dl, labelPos, FormatDistance(m.SurfaceDistanceMeters()));
+        LabelDistance(dl, labelPos, m.SurfaceDistanceMeters());
         string detail = "chord " + FormatDistance((aEcl - bEcl).Length())
             + "  brg " + m.BearingDegrees().ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " deg";
         Label(dl, new float2(labelPos.X, labelPos.Y + LabelStackStep()), detail);
@@ -375,6 +378,9 @@ internal static class MeasureOverlay
     // construction plane when the cursor would place a free point.
     private static void DrawPlacementPreview(ImDrawListPtr dl, Camera camera, Viewport viewport, float2 vpPos)
     {
+#if DEBUG
+        using var perfScope = new PerfTracker.Scope("MeasureOverlay.DrawPlacementPreview");
+#endif
         var io = ImGui.GetIO();
         if (!MeasureState.IsArmed || io.WantCaptureMouse)
         {
@@ -385,27 +391,36 @@ internal static class MeasureOverlay
         }
 
         float2 mouseViewport = io.MousePos - vpPos;
+        // A cursor outside the viewport cannot place a point, and a cursor that
+        // left the OS window reports far outside it; either way picking over
+        // that position is wasted work.
+        if (mouseViewport.X < 0f || mouseViewport.Y < 0f
+            || mouseViewport.X > viewport.Size.X || mouseViewport.Y > viewport.Size.Y)
+        {
+            Reset();
+            return;
+        }
         // Ctrl previews (and places) a free point on the ecliptic plane even where
         // snapping would win; a modifier change re-picks immediately so the preview
         // flips with the key.
         bool eclipticFree = io.KeyCtrl;
-        _previewFramesSincePick++;
-        if (_previewFramesSincePick >= PreviewPickIntervalFrames
+        long now = Stopwatch.GetTimestamp();
+        if (Stopwatch.GetElapsedTime(_previewLastPickTimestamp, now).TotalMilliseconds >= PreviewPickIntervalMs
             || _previewStateVersion != MeasureState.StateVersion
             || _previewEclipticFree != eclipticFree)
         {
             if (MeasureState.Mode == MeasureMode.Circle)
             {
-                MapPicker.PickCircle(viewport, mouseViewport, out Anchor? circleCenter, out Anchor? circleRim);
+                MapPicker.PickCircle(viewport, mouseViewport, out Anchor? circleCenter, out Anchor? circleRim, reuseStockHover: true);
                 _previewCache = circleRim;
                 _previewCacheSecondary = circleCenter;
             }
             else
             {
-                _previewCache = MapPicker.Pick(viewport, mouseViewport, eclipticFree);
+                _previewCache = MapPicker.Pick(viewport, mouseViewport, eclipticFree, reuseStockHover: true);
                 _previewCacheSecondary = null;
             }
-            _previewFramesSincePick = 0;
+            _previewLastPickTimestamp = now;
             _previewStateVersion = MeasureState.StateVersion;
             _previewEclipticFree = eclipticFree;
         }
@@ -461,7 +476,7 @@ internal static class MeasureOverlay
             float2 a = pendingScreen[0];
             dl.AddLine(in a, in cursor, PendingColor, 2.4f);
             double meters = (pending[0].ResolveEcl() - preview.ResolveEcl()).Length();
-            Label(dl, SegmentLabelPos(a, cursor), FormatDistance(meters));
+            LabelDistance(dl, SegmentLabelPos(a, cursor), meters);
         }
         else if (MeasureState.Mode == MeasureMode.Surface)
         {
@@ -474,7 +489,7 @@ internal static class MeasureOverlay
                 DrawGreatCircleArc(dl, camera, vpPos, centerEcl, pending[0].ResolveEcl(), preview.ResolveEcl(), PendingColor, 2.4f);
                 double meters = Measurement.GreatCircleMeters(
                     body, pending[0].Latitude, pending[0].Longitude, preview.Latitude, preview.Longitude);
-                Label(dl, SegmentLabelPos(pendingScreen[0], cursor), FormatDistance(meters));
+                LabelDistance(dl, SegmentLabelPos(pendingScreen[0], cursor), meters);
             }
         }
         else if (MeasureState.Mode == MeasureMode.FaceAngle)
@@ -487,10 +502,10 @@ internal static class MeasureOverlay
             double3? n1 = preview.ResolveNormalEcl();
             DrawNormalArrow(dl, camera, vpPos, pending[0].ResolveEcl(), n0, PendingColor, 2.4f);
             DrawNormalArrow(dl, camera, vpPos, preview.ResolveEcl(), n1, PendingColor, 2.4f);
-            string text = n0 != null && n1 != null
-                ? RadianReference.FromRadians(Measurement.AngleBetweenNormals(n0.Value, n1.Value)).ToStringDegrees()
-                : "undefined";
-            Label(dl, SegmentLabelPos(a, cursor), text);
+            double previewAngle = n0 != null && n1 != null
+                ? Measurement.AngleBetweenNormals(n0.Value, n1.Value)
+                : double.NaN;
+            LabelDegrees(dl, SegmentLabelPos(a, cursor), previewAngle);
         }
         else if (MeasureState.Mode == MeasureMode.Angle && pending.Count == 1)
         {
@@ -498,7 +513,7 @@ internal static class MeasureOverlay
             float2 a = pendingScreen[0];
             dl.AddLine(in cursor, in a, PendingColor, 2.4f);
             double meters = (pending[0].ResolveEcl() - preview.ResolveEcl()).Length();
-            Label(dl, SegmentLabelPos(cursor, a), FormatDistance(meters));
+            LabelDistance(dl, SegmentLabelPos(cursor, a), meters);
         }
         else if (MeasureState.Mode == MeasureMode.Angle)
         {
@@ -513,8 +528,8 @@ internal static class MeasureOverlay
             double3 armBEcl = preview.ResolveEcl();
             double angle = Measurement.AngleBetween(apexEcl, armAEcl, armBEcl);
             DrawAngleArcAndLabel(dl, apex, a, cursor, angle, PendingColor);
-            Label(dl, SegmentLabelPos(apex, a), FormatDistance((armAEcl - apexEcl).Length()));
-            Label(dl, SegmentLabelPos(apex, cursor), FormatDistance((armBEcl - apexEcl).Length()));
+            LabelDistance(dl, SegmentLabelPos(apex, a), (armAEcl - apexEcl).Length());
+            LabelDistance(dl, SegmentLabelPos(apex, cursor), (armBEcl - apexEcl).Length());
         }
     }
 
@@ -690,7 +705,7 @@ internal static class MeasureOverlay
         while (d < -Math.PI) d += 2.0 * Math.PI;
         double am = a0 + d * 0.5;
         var lp = new float2(apex.X + (float)Math.Cos(am) * (ArcPx + 18f), apex.Y + (float)Math.Sin(am) * (ArcPx + 18f));
-        Label(dl, lp, RadianReference.FromRadians(angleRadians).ToStringDegrees());
+        LabelDegrees(dl, lp, angleRadians);
     }
 
     // A thin arc between two screen-space unit directions around a center, the short
@@ -748,7 +763,10 @@ internal static class MeasureOverlay
         return ImGui.GetTextLineHeightWithSpacing() + 6f;
     }
 
-    private static void Label(ImDrawListPtr dl, float2 pos, string text)
+    // ImString accepts strings and char spans alike and copies span text into
+    // ImGui's arena, so span callers (LabelDistance, the degree labels) skip the
+    // per-frame string allocation entirely.
+    private static void Label(ImDrawListPtr dl, float2 pos, ImString text)
     {
         // Background plate so labels stay readable over orbit lines, planet discs
         // and other labels.
@@ -757,6 +775,25 @@ internal static class MeasureOverlay
         var pMax = new float2(pos.X + size.X + 4f, pos.Y + size.Y + 2f);
         dl.AddRectFilled(in pMin, in pMax, LabelPlate, 3f);
         dl.AddText(in pos, LabelColor, text);
+    }
+
+    // Distance labels without prefix text: ToNearest writes into the stack
+    // buffer and the span goes straight into the ImGui arena.
+    private static void LabelDistance(ImDrawListPtr dl, float2 pos, double meters)
+    {
+        Span<char> buffer = stackalloc char[64];
+        Label(dl, pos, DistanceReference.ToNearest(meters, buffer));
+    }
+
+    private static void LabelDegrees(ImDrawListPtr dl, float2 pos, double angleRadians)
+    {
+        if (double.IsNaN(angleRadians))
+        {
+            Label(dl, pos, "undefined");
+            return;
+        }
+        Span<char> buffer = stackalloc char[64];
+        Label(dl, pos, RadianReference.FromRadians(angleRadians).ToStringDegrees(buffer));
     }
 
     // Label position for a segment: at the midpoint, offset perpendicular to the

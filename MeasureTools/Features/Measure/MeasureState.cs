@@ -218,6 +218,9 @@ internal static class MeasureState
     // gone, part deleted) drop the affected measurement.
     public static void Prune()
     {
+#if DEBUG
+        using var perfScope = new PerfTracker.Scope("MeasureState.Prune");
+#endif
         CelestialSystem? system = Universe.CurrentSystem;
         if (!ReferenceEquals(system, _system))
         {
