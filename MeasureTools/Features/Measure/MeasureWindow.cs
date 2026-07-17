@@ -104,10 +104,23 @@ internal sealed class MeasureWindow : ImGuiWindow
             MeasureState.SetMode(MeasureMode.Surface);
             MeasureState.SetToolActive(true);
         }
+        if (ImGui.RadioButton("Circle"u8, active && MeasureState.Mode == MeasureMode.Circle))
+        {
+            MeasureState.SetMode(MeasureMode.Circle);
+            MeasureState.SetToolActive(true);
+        }
+        ImGui.SameLine();
+        if (ImGui.RadioButton("Face angle"u8, active && MeasureState.Mode == MeasureMode.FaceAngle))
+        {
+            MeasureState.SetMode(MeasureMode.FaceAngle);
+            MeasureState.SetToolActive(true);
+        }
 
         // Snap and the reference body only apply to ruler/protractor picking;
-        // surface mode always ray-casts the celestial spheres.
-        ImGui.BeginDisabled(!active || MeasureState.Mode == MeasureMode.Surface);
+        // surface mode ray-casts the celestial spheres, circle and face-angle
+        // modes have their own part picking.
+        bool snapControlsApply = MeasureState.Mode == MeasureMode.Ruler || MeasureState.Mode == MeasureMode.Angle;
+        ImGui.BeginDisabled(!active || !snapControlsApply);
         bool snap = MeasureState.SnapEnabled;
         if (ImGui.Checkbox("Snap to bodies and orbit lines"u8, ref snap))
             MeasureState.SetSnapEnabled(snap);
@@ -122,11 +135,15 @@ internal sealed class MeasureWindow : ImGuiWindow
         ImGui.Indent();
         ImGui.BeginDisabled(!snapParts);
         bool snapNodes = MeasureState.PartFeatureSnapEnabled;
-        if (ImGui.Checkbox("Attach nodes and part centers"u8, ref snapNodes))
+        if (ImGui.Checkbox("Attach nodes, centers, rim centers"u8, ref snapNodes))
             MeasureState.SetPartFeatureSnapEnabled(snapNodes);
+        if (ImGui.IsItemHovered())
+            ImGuiHelper.DrawTooltip("Point targets: attach nodes, part centers, fitted rim centers,\nand the mirror of the previous point across the part axis."u8);
         bool snapVertices = MeasureState.PartVertexSnapEnabled;
-        if (ImGui.Checkbox("Mesh vertices"u8, ref snapVertices))
+        if (ImGui.Checkbox("Mesh vertices and edges"u8, ref snapVertices))
             MeasureState.SetPartVertexSnapEnabled(snapVertices);
+        if (ImGui.IsItemHovered())
+            ImGuiHelper.DrawTooltip("Vertices, feature-edge midpoints, and sliding along feature edges\n(tank rims and other sharp or boundary edges)."u8);
         ImGui.EndDisabled();
         ImGui.Unindent();
         ImGui.EndDisabled();
@@ -185,6 +202,10 @@ internal sealed class MeasureWindow : ImGuiWindow
             MeasureMode.Surface => have == 0
                 ? "Click on a body: place the first surface point"
                 : "Click the same body: place the second surface point",
+            MeasureMode.Circle => "Click a circular part edge (e.g. a tank rim)",
+            MeasureMode.FaceAngle => have == 0
+                ? "Click a part surface: sample the first face"
+                : "Click a part surface: sample the second face",
             _ => have switch
             {
                 0 => "Click in the view: place the first arm",
@@ -197,9 +218,14 @@ internal sealed class MeasureWindow : ImGuiWindow
         ImGui.TextDisabled("(?)"u8);
         if (ImGui.IsItemHovered())
         {
-            ImGuiHelper.DrawTooltip(MeasureState.Mode == MeasureMode.Surface
-                ? "Points pin to the surface and track the body's rotation.\nShort right-click: cancel point, or pause measuring when nothing is pending."u8
-                : "Free clicks land on the camera plane.\nCtrl-click: free point on the ecliptic plane.\nShort right-click: cancel point, or pause measuring when nothing is pending."u8);
+            if (MeasureState.Mode == MeasureMode.Surface)
+                ImGuiHelper.DrawTooltip("Points pin to the surface and track the body's rotation.\nShort right-click: cancel point, or pause measuring when nothing is pending."u8);
+            else if (MeasureState.Mode == MeasureMode.Circle)
+                ImGuiHelper.DrawTooltip("One click on a circular part edge measures its diameter, radius\nand circumference from a fitted circle.\nShort right-click: pause measuring."u8);
+            else if (MeasureState.Mode == MeasureMode.FaceAngle)
+                ImGuiHelper.DrawTooltip("Angle between two sampled surface normals (0 deg = parallel faces\nfacing the same way).\nShort right-click: cancel point, or pause measuring when nothing is pending."u8);
+            else
+                ImGuiHelper.DrawTooltip("Free clicks land on the camera plane.\nCtrl-click: free point on the ecliptic plane.\nShort right-click: cancel point, or pause measuring when nothing is pending."u8);
         }
         if (have > 0 && ImGui.SmallButton("Cancel point placement"u8))
             MeasureState.CancelPending();
@@ -300,6 +326,14 @@ internal sealed class MeasureWindow : ImGuiWindow
             return new string(DistanceReference.ToNearest(m.DistanceMeters(), buffer));
         if (m.Mode == MeasureMode.Surface)
             return new string(DistanceReference.ToNearest(m.SurfaceDistanceMeters(), buffer));
+        if (m.Mode == MeasureMode.Circle)
+            return "d " + new string(DistanceReference.ToNearest(m.CircleDiameterMeters(), buffer));
+        if (m.Mode == MeasureMode.FaceAngle)
+        {
+            double faceAngle = m.FaceAngleRadians();
+            // NaN while a normal cannot resolve (stale owner mid-transition).
+            return double.IsNaN(faceAngle) ? "undefined" : RadianReference.FromRadians(faceAngle).ToStringDegrees();
+        }
         double angle = m.AngleRadians();
         // NaN when an arm coincides with the apex (e.g. both on one body).
         return double.IsNaN(angle) ? "undefined" : RadianReference.FromRadians(angle).ToStringDegrees();
@@ -324,6 +358,18 @@ internal sealed class MeasureWindow : ImGuiWindow
                 return value + ", chord " + chord + ", bearing "
                     + m.BearingDegrees().ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)
                     + " deg  (" + endpoints + ")";
+            }
+            case MeasureMode.Circle:
+            {
+                string radius = new string(DistanceReference.ToNearest(m.CircleRadiusMeters(), buffer));
+                string circumference = new string(DistanceReference.ToNearest(m.CircleCircumferenceMeters(), buffer));
+                return value + ", r " + radius + ", C " + circumference + "  (" + endpoints + ")";
+            }
+            case MeasureMode.Ruler when m.TryGetAxialRadialMeters(out double axial, out double radial):
+            {
+                string axialText = new string(DistanceReference.ToNearest(axial, buffer));
+                string radialText = new string(DistanceReference.ToNearest(radial, buffer));
+                return value + ", axial " + axialText + ", radial " + radialText + "  (" + endpoints + ")";
             }
             default:
                 return value + "  (" + endpoints + ")";

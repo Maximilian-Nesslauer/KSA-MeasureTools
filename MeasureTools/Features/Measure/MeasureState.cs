@@ -43,7 +43,12 @@ internal static class MeasureState
     // runs them in that order), so the map highlight follows the list hover.
     public static int HighlightIndex = -1;
 
-    public static int PointsNeeded => Mode == MeasureMode.Angle ? 3 : 2;
+    public static int PointsNeeded => Mode switch
+    {
+        MeasureMode.Angle => 3,
+        MeasureMode.Circle => 1,
+        _ => 2,
+    };
 
     // Whether the tool currently captures map clicks. The window can stay open
     // with the tool paused (short right-click with nothing pending), so the game
@@ -170,11 +175,24 @@ internal static class MeasureState
                 {
                     MeasureMode.Ruler => $"distance={measurement.DistanceMeters():F1} m",
                     MeasureMode.Surface => $"surface distance={measurement.SurfaceDistanceMeters():F1} m, bearing={measurement.BearingDegrees():F1} deg",
+                    MeasureMode.FaceAngle => $"face angle={measurement.FaceAngleRadians() * (180.0 / Math.PI):F3} deg",
                     _ => $"angle={measurement.AngleRadians() * (180.0 / Math.PI):F3} deg",
                 };
                 DefaultCategory.Log.Debug($"[MeasureTools] Measurement #{Measurements.Count} completed: {value}.");
             }
         }
+    }
+
+    // Circle mode settles in one click but needs two anchors (center + rim), so
+    // it bypasses the pending flow entirely.
+    public static void AddCircle(Anchor center, Anchor rim)
+    {
+        var measurement = new Measurement { Mode = MeasureMode.Circle, Anchors = new[] { center, rim } };
+        Measurements.Add(measurement);
+        StateVersion++;
+        if (DebugConfig.Measure)
+            DefaultCategory.Log.Debug(
+                $"[MeasureTools] Circle measurement #{Measurements.Count} completed: '{center.Label}' d={measurement.CircleDiameterMeters():F3} m.");
     }
 
     public static void CancelPending()

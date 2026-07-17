@@ -32,11 +32,20 @@ internal static class MapPicker
     // the useful target.
     private const float PartVehicleMinDiameterPx = 24f;
 
-    // Screen-space acceptance radius for part features (attach nodes, part centers).
+    // Screen-space acceptance radius for part point features (attach nodes, part
+    // centers, rim centers, the mirror point).
     private const float PartFeatureSnapRadiusPx = 16f;
 
-    // Screen-space acceptance radius for mesh vertices of the hit subpart.
+    // Screen-space acceptance radius for mesh vertices and feature-edge midpoints
+    // of the hit subpart.
     private const float PartVertexSnapRadiusPx = 12f;
+
+    // Screen-space acceptance radius for the closest point on a feature edge.
+    private const float PartEdgeSnapRadiusPx = 10f;
+
+    // Screen-space acceptance radius from the cursor to a circle's ring in
+    // Circle mode.
+    private const float CircleSnapRadiusPx = 14f;
 
     // Plane semantics: a plain click that snaps to nothing lands on the camera-facing
     // plane (always exactly under the cursor). With eclipticFree (ctrl held) all
@@ -45,9 +54,15 @@ internal static class MapPicker
     public static Anchor? Pick(Viewport viewport, float2 mouseViewport, bool eclipticFree = false)
     {
         // Surface mode has its own picking: ray versus the celestial spheres, no
-        // body/orbit snapping and no free placement.
+        // body/orbit snapping and no free placement. FaceAngle picks raw part
+        // surface hits only (the normal is the datum). Circle mode returns an
+        // anchor PAIR and never routes through here (see PickCircle).
         if (MeasureState.Mode == MeasureMode.Surface)
             return PickSurface(viewport, mouseViewport);
+        if (MeasureState.Mode == MeasureMode.FaceAngle)
+            return PickFaceAngle(viewport, mouseViewport);
+        if (MeasureState.Mode == MeasureMode.Circle)
+            return null;
         if (MeasureState.SnapEnabled && !eclipticFree)
         {
             if (MeasureState.PartSnapEnabled)
@@ -111,16 +126,18 @@ internal static class MapPicker
         return Anchor.PinOnSurface(best, latitude, longitude);
     }
 
-    // A part feature candidate (attach node or part center) found by the
-    // screen-space scan. Position is in the part's local asmb frame unless
-    // IsVehicleAsmb (connectors, whose stock position is computed in the
-    // vehicle-asmb frame). Vehicle stays null in the editor.
+    // A part point-feature candidate (attach node, part center, rim center or
+    // mirror point) found by the screen-space scan. Position is in the part's
+    // local asmb frame unless IsVehicleAsmb (connectors, whose stock position is
+    // computed in the vehicle-asmb frame). Vehicle stays null in the editor;
+    // Normal carries a circle's plane normal.
     private struct FeatureCandidate
     {
         public Vehicle? Vehicle;
         public Part? Part;
         public double3 Position;
         public bool IsVehicleAsmb;
+        public double3? Normal;
         public string Label = "";
         public float ScreenDist;
 
@@ -135,6 +152,7 @@ internal static class MapPicker
         public Part? FullPart;
         public Part? SubPart;
         public double3 LocalPos;
+        public double3 NormalLocal;
         public double Distance = double.MaxValue;
         public double4x4 Matrix;
 
@@ -143,42 +161,44 @@ internal static class MapPicker
         }
     }
 
-    // Part-level picking, patterned after the stock flight-view hover raycast
-    // (Vehicle.UpdateHighlight) and the debug editor's connector snapping
-    // (VehicleEditor.HandleConnectorConnections, a screen-space proximity test):
-    // an exact watertight mesh raycast finds the part surface point under the
-    // cursor, and two screen-space snap tiers refine it to attach nodes / part
-    // centers and mesh vertices. Feature snap outranks vertex snap outranks the
-    // raw surface hit (features are sparse, intentional targets; the surface hit
-    // is always exactly under the cursor, so it stays the fallback). No result
-    // falls through to the body/orbit/free picking.
-    private static Anchor? PickPart(Viewport viewport, float2 mouseViewport)
+    // Shared gated mesh-hit scan behind all part-based picking. With the editor
+    // open it scans the editing space's tree plus the unattached (in-hand) trees
+    // (the edited craft is not in the system list, and the original of an edited
+    // vehicle still is - double-pick hazard); otherwise every vehicle that
+    // projects large enough, with a bounding-sphere pre-check per vehicle.
+    // Optionally collects point-feature candidates along the way so PickPart
+    // shares the vehicle gating with the mode-specific pickers.
+    private static bool TryGetMeshHit(Viewport viewport, float2 mouseViewport, bool scanFeatures,
+        ref FeatureCandidate feature, out Camera camera, out Vehicle? hitVehicle, out PartHit hit)
     {
-#if DEBUG
-        using var perfScope = new PerfTracker.Scope("MapPicker.PickPart");
-#endif
-        Camera camera = viewport.GetCamera();
+        camera = viewport.GetCamera();
+        hitVehicle = null;
+        hit = new PartHit();
         Ray ray = camera.ScreenToEgoRay(mouseViewport);
         // Stock normalizes before part raycasts (Vehicle.UpdateHighlight); the
         // watertight test needs a unit direction for its distances to be metric.
         ray.Direction = ray.Direction.NormalizeOrZero();
         if (ray.Direction.X == 0.0 && ray.Direction.Y == 0.0 && ray.Direction.Z == 0.0)
-            return null;
+            return false;
 
-        // The edited craft lives in the editing space, not in the system's vehicle
-        // list; and while editing an existing vehicle, the original still exists in
-        // the system at the same location, so the flight scan must not run too.
-        if (Program.Editor != null)
-            return PickPartEditor(camera, mouseViewport, ray);
+        if (Program.Editor is VehicleEditor editor)
+        {
+            double4x4 matrixVehicleAsmb2Ego = editor.EditingSpace.GetMatrixAsmb2Ego(camera);
+            if (scanFeatures)
+            {
+                ScanPartFeatures(camera, mouseViewport, editor.EditingSpace.AllParts, in matrixVehicleAsmb2Ego, ref feature);
+                foreach (PartTree tree in editor.UnattachedPartTrees)
+                    ScanPartFeatures(camera, mouseViewport, tree.Parts, in matrixVehicleAsmb2Ego, ref feature);
+            }
+            RaycastPartSpan(editor.EditingSpace.AllParts, in matrixVehicleAsmb2Ego, ray, ref hit);
+            foreach (PartTree tree in editor.UnattachedPartTrees)
+                RaycastPartSpan(tree.Parts, in matrixVehicleAsmb2Ego, ray, ref hit);
+            return hit.SubPart != null;
+        }
 
         CelestialSystem? system = Universe.CurrentSystem;
         if (system == null)
-            return null;
-
-        Vehicle? hitVehicle = null;
-        var hit = new PartHit();
-        var feature = new FeatureCandidate { ScreenDist = PartFeatureSnapRadiusPx };
-
+            return false;
         foreach (Astronomical astronomical in system.All.AsSpan())
         {
             if (astronomical is not Vehicle vehicle)
@@ -197,7 +217,7 @@ internal static class MapPicker
 
             double4x4 matrixVehicleAsmb2Ego = vehicle.GetMatrixAsmb2Ego(vehiclePosEgo);
 
-            if (MeasureState.PartFeatureSnapEnabled)
+            if (scanFeatures)
             {
                 float featureDistBefore = feature.ScreenDist;
                 ScanPartFeatures(camera, mouseViewport, tree.Parts, in matrixVehicleAsmb2Ego, ref feature);
@@ -216,68 +236,269 @@ internal static class MapPicker
             if (hit.Distance < hitDistanceBefore)
                 hitVehicle = vehicle;
         }
-
-        if (feature.Vehicle != null && feature.Part != null)
-        {
-            return feature.IsVehicleAsmb
-                ? Anchor.AtPartVehicleAsmb(feature.Vehicle, feature.Part, feature.Position, feature.Label)
-                : Anchor.AtPartLocal(feature.Vehicle, feature.Part, feature.Position, feature.Label);
-        }
-
-        if (hitVehicle == null || hit.FullPart == null || hit.SubPart == null)
-            return null;
-
-        if (MeasureState.PartVertexSnapEnabled
-            && TryPickVertex(camera, mouseViewport, hit.SubPart, in hit.Matrix, out double3 vertexLocal))
-        {
-            return Anchor.AtPartLocal(hitVehicle, hit.SubPart, vertexLocal,
-                hit.FullPart.DisplayName + " vertex");
-        }
-
-        return Anchor.AtPartLocal(hitVehicle, hit.SubPart, hit.LocalPos,
-            hit.FullPart.DisplayName + " surface");
+        return hit.SubPart != null;
     }
 
-    // Editor variant: same snap tiers over the editing space's part tree plus any
-    // unattached (grabbed/floating) trees, using the editing space transform. No
-    // size or sphere gates; the editor camera always sits close to the craft, and
-    // the stock editor raycasts the same parts every frame anyway.
-    private static Anchor? PickPartEditor(Camera camera, float2 mouseViewport, Ray ray)
+    // Builds the flight or editor variant of a part anchor; the editor is the
+    // active context exactly when no owning vehicle was attributed.
+    private static Anchor MakePartAnchor(Vehicle? vehicle, Part part, double3 offsetLocal, string partLabel, double3? normalLocal = null)
     {
-        VehicleEditor editor = Program.Editor!;
-        VehicleEditingSpace space = editor.EditingSpace;
-        double4x4 matrixVehicleAsmb2Ego = space.GetMatrixAsmb2Ego(camera);
+        return vehicle != null
+            ? Anchor.AtPartLocal(vehicle, part, offsetLocal, partLabel, normalLocal)
+            : Anchor.AtEditorPartLocal(part, offsetLocal, partLabel, normalLocal);
+    }
 
-        var hit = new PartHit();
+    private static Anchor MakePartAnchorVehicleAsmb(Vehicle? vehicle, Part part, double3 posVehicleAsmb, string partLabel)
+    {
+        return vehicle != null
+            ? Anchor.AtPartVehicleAsmb(vehicle, part, posVehicleAsmb, partLabel)
+            : Anchor.AtEditorPartVehicleAsmb(part, posVehicleAsmb, partLabel);
+    }
+
+    // Part-level picking, patterned after the stock flight-view hover raycast
+    // (Vehicle.UpdateHighlight) and the debug editor's connector snapping
+    // (VehicleEditor.HandleConnectorConnections, a screen-space proximity test).
+    // Snap tiers, most intentional first: point features (attach nodes, part
+    // centers, rim centers, the mirror point) > vertices and edge midpoints >
+    // closest point on a feature edge > the raw watertight surface hit, which is
+    // always exactly under the cursor and so stays the fallback. No result falls
+    // through to the body/orbit/free picking.
+    private static Anchor? PickPart(Viewport viewport, float2 mouseViewport)
+    {
+#if DEBUG
+        using var perfScope = new PerfTracker.Scope("MapPicker.PickPart");
+#endif
         var feature = new FeatureCandidate { ScreenDist = PartFeatureSnapRadiusPx };
+        bool hasHit = TryGetMeshHit(viewport, mouseViewport, MeasureState.PartFeatureSnapEnabled,
+            ref feature, out Camera camera, out Vehicle? hitVehicle, out PartHit hit);
 
-        if (MeasureState.PartFeatureSnapEnabled)
+        // The hit subpart's feature set is resolved once and threaded through the
+        // tiers that need it (rim centers, vertices/midpoints, edges).
+        MeshFeatureCache.MeshFeatures? hitFeatures = hasHit && hit.SubPart != null ? GetHitFeatures(in hit) : null;
+
+        // Rim centers and the mirror point need the hit subpart, so they join
+        // the point-feature tier after the general scan.
+        if (hitFeatures != null && MeasureState.PartFeatureSnapEnabled)
         {
-            ScanPartFeatures(camera, mouseViewport, space.AllParts, in matrixVehicleAsmb2Ego, ref feature);
-            foreach (PartTree tree in editor.UnattachedPartTrees)
-                ScanPartFeatures(camera, mouseViewport, tree.Parts, in matrixVehicleAsmb2Ego, ref feature);
+            AddCircleCenterCandidates(camera, mouseViewport, hitVehicle, in hit, hitFeatures, ref feature);
+            AddMirrorCandidate(camera, mouseViewport, hitVehicle, in hit, ref feature);
         }
-        RaycastPartSpan(space.AllParts, in matrixVehicleAsmb2Ego, ray, ref hit);
-        foreach (PartTree tree in editor.UnattachedPartTrees)
-            RaycastPartSpan(tree.Parts, in matrixVehicleAsmb2Ego, ray, ref hit);
 
         if (feature.Part != null)
         {
             return feature.IsVehicleAsmb
-                ? Anchor.AtEditorPartVehicleAsmb(feature.Part, feature.Position, feature.Label)
-                : Anchor.AtEditorPartLocal(feature.Part, feature.Position, feature.Label);
+                ? MakePartAnchorVehicleAsmb(feature.Vehicle, feature.Part, feature.Position, feature.Label)
+                : MakePartAnchor(feature.Vehicle, feature.Part, feature.Position, feature.Label, feature.Normal);
         }
 
-        if (hit.FullPart == null || hit.SubPart == null)
+        if (hitFeatures == null || hit.FullPart == null || hit.SubPart == null)
             return null;
 
-        if (MeasureState.PartVertexSnapEnabled
-            && TryPickVertex(camera, mouseViewport, hit.SubPart, in hit.Matrix, out double3 vertexLocal))
+        if (MeasureState.PartVertexSnapEnabled)
         {
-            return Anchor.AtEditorPartLocal(hit.SubPart, vertexLocal, hit.FullPart.DisplayName + " vertex");
+            if (TryPickVertexOrMidpoint(camera, mouseViewport, hit.SubPart, in hit.Matrix, hitFeatures, out double3 pointLocal, out bool isMidpoint))
+            {
+                return MakePartAnchor(hitVehicle, hit.SubPart, pointLocal,
+                    hit.FullPart.DisplayName + (isMidpoint ? " edge mid" : " vertex"));
+            }
+            if (TryPickEdgePoint(camera, mouseViewport, hit.SubPart, in hit.Matrix, hitFeatures, out double3 edgeLocal))
+                return MakePartAnchor(hitVehicle, hit.SubPart, edgeLocal, hit.FullPart.DisplayName + " edge");
         }
 
-        return Anchor.AtEditorPartLocal(hit.SubPart, hit.LocalPos, hit.FullPart.DisplayName + " surface");
+        return MakePartAnchor(hitVehicle, hit.SubPart, hit.LocalPos,
+            hit.FullPart.DisplayName + " surface", NormalOrNull(hit.NormalLocal));
+    }
+
+    // Circle mode: one click on a circular feature edge. Produces the fitted
+    // center (carrying the circle plane normal) plus the ring point nearest the
+    // hit, both as part anchors; radius/diameter derive live from the pair.
+    public static bool PickCircle(Viewport viewport, float2 mouseViewport, out Anchor? center, out Anchor? rim)
+    {
+#if DEBUG
+        using var perfScope = new PerfTracker.Scope("MapPicker.PickCircle");
+#endif
+        center = null;
+        rim = null;
+        var unusedFeature = new FeatureCandidate();
+        if (!TryGetMeshHit(viewport, mouseViewport, scanFeatures: false, ref unusedFeature,
+                out Camera camera, out Vehicle? hitVehicle, out PartHit hit)
+            || hit.SubPart == null || hit.FullPart == null)
+            return false;
+        MeshFeatureCache.MeshFeatures features = GetHitFeatures(in hit);
+        if (features.Circles.Length == 0)
+            return false;
+        double4x4 matrixAsmb2Ego = hit.SubPart.MatrixAsmb2Ego(in hit.Matrix);
+
+        int bestIndex = -1;
+        double3 bestRimLocal = default;
+        float bestDist = CircleSnapRadiusPx;
+        for (int i = 0; i < features.Circles.Length; i++)
+        {
+            MeshFeatureCache.CircleFeature circle = features.Circles[i];
+            // The ring point nearest the hit, in the subpart frame.
+            double3 d = hit.LocalPos - circle.Center;
+            double3 planar = d - circle.Normal * double3.Dot(d, circle.Normal);
+            double3 dir = planar.NormalizeOrZero();
+            if (dir.X == 0.0 && dir.Y == 0.0 && dir.Z == 0.0)
+                continue;
+            double3 rimLocal = circle.Center + dir * circle.Radius;
+            float2 s = camera.EgoToScreen(rimLocal.Transform(matrixAsmb2Ego));
+            if (float.IsNaN(s.X) || float.IsNaN(s.Y))
+                continue;
+            float dist = float2.Distance(s, mouseViewport);
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                bestIndex = i;
+                bestRimLocal = rimLocal;
+            }
+        }
+        if (bestIndex < 0)
+            return false;
+        MeshFeatureCache.CircleFeature best = features.Circles[bestIndex];
+        string partName = hit.FullPart.DisplayName;
+        center = MakePartAnchor(hitVehicle, hit.SubPart, best.Center, partName + " rim center", best.Normal);
+        rim = MakePartAnchor(hitVehicle, hit.SubPart, bestRimLocal, partName + " rim");
+        return true;
+    }
+
+    // FaceAngle mode: the raw surface hit only; snapping to points would move
+    // the sample off the face whose normal is being measured.
+    private static Anchor? PickFaceAngle(Viewport viewport, float2 mouseViewport)
+    {
+        var unusedFeature = new FeatureCandidate();
+        if (!TryGetMeshHit(viewport, mouseViewport, scanFeatures: false, ref unusedFeature,
+                out _, out Vehicle? hitVehicle, out PartHit hit)
+            || hit.SubPart == null || hit.FullPart == null)
+            return null;
+        double3? normal = NormalOrNull(hit.NormalLocal);
+        if (normal == null)
+            return null;
+        return MakePartAnchor(hitVehicle, hit.SubPart, hit.LocalPos, hit.FullPart.DisplayName + " face", normal);
+    }
+
+    private static double3? NormalOrNull(double3 normal)
+    {
+        double3 unit = normal.NormalizeOrZero();
+        return unit.X == 0.0 && unit.Y == 0.0 && unit.Z == 0.0 ? null : unit;
+    }
+
+    private static MeshFeatureCache.MeshFeatures GetHitFeatures(ref readonly PartHit hit)
+    {
+        // The hit subpart was just raycast successfully, so its mesh view exists.
+        return MeshFeatureCache.Get(hit.SubPart!.Modules.Get<MeshViewModule>()[0].MeshView);
+    }
+
+    // Fitted circle centers of the hit subpart ("rim center") as point features.
+    private static void AddCircleCenterCandidates(Camera camera, float2 mouseViewport, Vehicle? hitVehicle,
+        ref readonly PartHit hit, MeshFeatureCache.MeshFeatures features, ref FeatureCandidate best)
+    {
+        if (features.Circles.Length == 0)
+            return;
+        double4x4 matrixAsmb2Ego = hit.SubPart!.MatrixAsmb2Ego(in hit.Matrix);
+        for (int i = 0; i < features.Circles.Length; i++)
+        {
+            MeshFeatureCache.CircleFeature circle = features.Circles[i];
+            float2 s = camera.EgoToScreen(circle.Center.Transform(matrixAsmb2Ego));
+            if (float.IsNaN(s.X) || float.IsNaN(s.Y))
+                continue;
+            float d = float2.Distance(s, mouseViewport);
+            if (d < best.ScreenDist)
+            {
+                best.Vehicle = hitVehicle;
+                best.Part = hit.SubPart;
+                best.Position = circle.Center;
+                best.IsVehicleAsmb = false;
+                best.Normal = circle.Normal;
+                best.Label = hit.FullPart!.DisplayName + " rim center";
+                best.ScreenDist = d;
+            }
+        }
+    }
+
+    // The CAD "symmetric point": when the previous pending point sits on the hit
+    // full part, its reflection across the part's axis is offered as a feature,
+    // giving an exact antipodal second point (tank diameter on a box, strut to
+    // strut) without hunting for it.
+    private static void AddMirrorCandidate(Camera camera, float2 mouseViewport, Vehicle? hitVehicle,
+        ref readonly PartHit hit, ref FeatureCandidate best)
+    {
+        if (MeasureState.Pending.Count == 0)
+            return;
+        Anchor previous = MeasureState.Pending[^1];
+        Part fullPart = hit.FullPart!;
+        if (previous.Part == null || !ReferenceEquals(previous.Part.FullPart, fullPart))
+            return;
+
+        double4x4 matrixFullPart2Ego = fullPart.MatrixAsmb2Ego(in hit.Matrix);
+        double4x4.Invert(matrixFullPart2Ego, out double4x4 ego2FullPart);
+        double3 previousLocal = (previous.ResolveEcl() - camera.PositionEcl).Transform(ego2FullPart);
+
+        (double3 axisPoint, double3 axisDirection) = GetPartAxis(fullPart);
+        double3 offset = previousLocal - axisPoint;
+        double3 along = axisDirection * double3.Dot(offset, axisDirection);
+        double3 mirroredLocal = axisPoint + along - (offset - along);
+
+        float2 s = camera.EgoToScreen(mirroredLocal.Transform(matrixFullPart2Ego));
+        if (float.IsNaN(s.X) || float.IsNaN(s.Y))
+            return;
+        float d = float2.Distance(s, mouseViewport);
+        if (d < best.ScreenDist)
+        {
+            best.Vehicle = hitVehicle;
+            best.Part = fullPart;
+            best.Position = mirroredLocal;
+            best.IsVehicleAsmb = false;
+            best.Normal = null;
+            best.Label = fullPart.DisplayName + " opposite";
+            best.ScreenDist = d;
+        }
+    }
+
+    // The part's symmetry axis in its own frame: the line through its two
+    // most-opposing stack connectors (those without surface-attach flags), else
+    // the part-frame X axis through the bounding-box center. Stack connectors
+    // sit on part-frame X (CoreFuelTankAAssets.xml; the editor treats
+    // double3(1,0,0) through a connector rotation as the facing axis in
+    // VehicleEditor.HandleConnectorConnections).
+    private static (double3 Point, double3 Direction) GetPartAxis(Part part)
+    {
+        Part.Connector? bestA = null;
+        Part.Connector? bestB = null;
+        // A connector pair only counts as the axis when facing within about 25
+        // degrees of anti-parallel; anything looser falls through to the
+        // bounding-box fallback below.
+        const double minOpposingConnectorDot = -0.9;
+        double bestDot = minOpposingConnectorDot;
+        for (int i = 0; i < part.Connectors.Count; i++)
+        {
+            Part.Connector a = part.Connectors[i];
+            if ((a.Flags & (Part.Connector.Flag.ToSurface | Part.Connector.Flag.FromSurface)) != 0)
+                continue;
+            double3 facingA = new double3(1.0, 0.0, 0.0).Transform(a.Asmb2ParentAsmb);
+            for (int j = i + 1; j < part.Connectors.Count; j++)
+            {
+                Part.Connector b = part.Connectors[j];
+                if ((b.Flags & (Part.Connector.Flag.ToSurface | Part.Connector.Flag.FromSurface)) != 0)
+                    continue;
+                double dot = double3.Dot(facingA, new double3(1.0, 0.0, 0.0).Transform(b.Asmb2ParentAsmb));
+                if (dot < bestDot)
+                {
+                    bestDot = dot;
+                    bestA = a;
+                    bestB = b;
+                }
+            }
+        }
+        if (bestA != null && bestB != null)
+        {
+            double3 direction = (bestA.PositionParentAsmb - bestB.PositionParentAsmb).NormalizeOrZero();
+            if (direction.X != 0.0 || direction.Y != 0.0 || direction.Z != 0.0)
+                return (bestB.PositionParentAsmb, direction);
+        }
+        (double3 min, double3 max) = part.BoundingBoxPartAsmb;
+        double3 center = min.X <= max.X ? (min + max) * 0.5 : double3.Zero;
+        return (center, new double3(1.0, 0.0, 0.0));
     }
 
     // The stock per-part mesh raycast (Part.RayCastEgo) over one part span,
@@ -287,12 +508,13 @@ internal static class MapPicker
         for (int i = 0; i < parts.Length; i++)
         {
             if (parts[i].RayCastEgo(in matrixVehicleAsmb2Ego, ray, out double minDistance, out _,
-                    out double3 nearLocal, out _, out _, out _, out Part? closestSubPart, out _)
+                    out double3 nearLocal, out double3 nearNormal, out _, out _, out Part? closestSubPart, out _)
                 && minDistance > 0.0 && minDistance < hit.Distance && closestSubPart != null)
             {
                 hit.FullPart = parts[i];
                 hit.SubPart = closestSubPart;
                 hit.LocalPos = nearLocal;
+                hit.NormalLocal = nearNormal;
                 hit.Distance = minDistance;
                 hit.Matrix = matrixVehicleAsmb2Ego;
             }
@@ -350,22 +572,18 @@ internal static class MapPicker
         }
     }
 
-    // Nearest mesh vertex of the hit subpart within the vertex snap radius.
-    // PositionCompare is the index-unrolled triangle list the game's own raycast
-    // uses (three entries per triangle, in the subpart's local frame); scanning it
-    // revisits shared vertices but needs no extra assembly references. Only called
-    // after RayCastEgo hit this subpart, so the mesh view and its arrays exist.
-    private static bool TryPickVertex(Camera camera, float2 mouseViewport, Part subPart,
-        ref readonly double4x4 matrixVehicleAsmb2Ego, out double3 vertexLocal)
+    // Nearest mesh vertex or feature-edge midpoint of the hit subpart within the
+    // vertex snap radius, scanning the cache's welded vertex set (each position
+    // once, unlike the index-unrolled PositionCompare).
+    private static bool TryPickVertexOrMidpoint(Camera camera, float2 mouseViewport, Part subPart,
+        ref readonly double4x4 matrixVehicleAsmb2Ego, MeshFeatureCache.MeshFeatures features, out double3 pointLocal, out bool isMidpoint)
     {
 #if DEBUG
-        using var perfScope = new PerfTracker.Scope("MapPicker.TryPickVertex");
+        using var perfScope = new PerfTracker.Scope("MapPicker.TryPickVertexOrMidpoint");
 #endif
-        vertexLocal = default;
-        Span<MeshViewModule> meshViews = subPart.Modules.Get<MeshViewModule>();
-        if (meshViews.IsEmpty)
-            return false;
-        double3[] vertices = meshViews[0].MeshView.PositionCompare;
+        pointLocal = default;
+        isMidpoint = false;
+        double3[] vertices = features.Vertices;
         double4x4 matrixAsmb2Ego = subPart.MatrixAsmb2Ego(in matrixVehicleAsmb2Ego);
         float bestDist = PartVertexSnapRadiusPx;
         bool found = false;
@@ -378,7 +596,66 @@ internal static class MapPicker
             if (d < bestDist)
             {
                 bestDist = d;
-                vertexLocal = vertices[i];
+                pointLocal = vertices[i];
+                found = true;
+            }
+        }
+        MeshFeatureCache.EdgeSegment[] edges = features.Edges;
+        for (int i = 0; i < edges.Length; i++)
+        {
+            double3 mid = edges[i].Mid;
+            float2 s = camera.EgoToScreen(mid.Transform(matrixAsmb2Ego));
+            if (float.IsNaN(s.X) || float.IsNaN(s.Y))
+                continue;
+            float d = float2.Distance(s, mouseViewport);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                pointLocal = mid;
+                isMidpoint = true;
+                found = true;
+            }
+        }
+        return found;
+    }
+
+    // Closest point on a feature edge of the hit subpart: the cursor-to-segment
+    // distance is taken in screen space and the winning 2D parameter is mapped
+    // back onto the 3D segment, so the point slides along a tank rim between its
+    // vertices.
+    private static bool TryPickEdgePoint(Camera camera, float2 mouseViewport, Part subPart,
+        ref readonly double4x4 matrixVehicleAsmb2Ego, MeshFeatureCache.MeshFeatures features, out double3 edgePointLocal)
+    {
+#if DEBUG
+        using var perfScope = new PerfTracker.Scope("MapPicker.TryPickEdgePoint");
+#endif
+        edgePointLocal = default;
+        MeshFeatureCache.EdgeSegment[] edges = features.Edges;
+        if (edges.Length == 0)
+            return false;
+        double4x4 matrixAsmb2Ego = subPart.MatrixAsmb2Ego(in matrixVehicleAsmb2Ego);
+        float bestDist = PartEdgeSnapRadiusPx;
+        bool found = false;
+        for (int i = 0; i < edges.Length; i++)
+        {
+            float2 a = camera.EgoToScreen(edges[i].A.Transform(matrixAsmb2Ego));
+            float2 b = camera.EgoToScreen(edges[i].B.Transform(matrixAsmb2Ego));
+            if (float.IsNaN(a.X) || float.IsNaN(a.Y) || float.IsNaN(b.X) || float.IsNaN(b.Y))
+                continue;
+            float2 ab = b - a;
+            float lengthSq = ab.X * ab.X + ab.Y * ab.Y;
+            float t = 0f;
+            if (lengthSq > 1e-6f)
+            {
+                float2 toMouse = mouseViewport - a;
+                t = Math.Clamp((toMouse.X * ab.X + toMouse.Y * ab.Y) / lengthSq, 0f, 1f);
+            }
+            var closest = new float2(a.X + ab.X * t, a.Y + ab.Y * t);
+            float d = float2.Distance(closest, mouseViewport);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                edgePointLocal = edges[i].A + (edges[i].B - edges[i].A) * t;
                 found = true;
             }
         }

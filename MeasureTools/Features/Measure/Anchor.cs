@@ -63,6 +63,11 @@ internal sealed class Anchor
     // PartPoint / EditorPartPoint only: the anchored point in Part's local asmb frame.
     public double3 OffsetPartAsmb { get; init; }
 
+    // Part anchors picked on a surface (and circle centers) carry the surface or
+    // plane normal in the part's local frame, the datum for the face-angle mode
+    // and the circle overlay.
+    public double3? NormalPartAsmb { get; init; }
+
     // SurfacePin only, in degrees, body-fixed frame.
     public double Latitude { get; init; }
     public double Longitude { get; init; }
@@ -124,6 +129,27 @@ internal sealed class Anchor
     private static double3 InvalidPosition()
     {
         return new double3(double.NaN, double.NaN, double.NaN);
+    }
+
+    // The stored part-local normal rotated into ECL axes. Rotation-only chain
+    // (part scale is not applied), mirroring how the game transforms hit normals
+    // (VehicleEditor.TryComputeAttachedMountQuat rotates by Asmb2VehicleAsmb).
+    // Null when the anchor carries no normal or its owner is stale.
+    public double3? ResolveNormalEcl()
+    {
+        if (NormalPartAsmb == null || Part == null)
+            return null;
+        double3 normalVehicleAsmb = NormalPartAsmb.Value.Transform(Part.Asmb2VehicleAsmb);
+        if (Kind == AnchorKind.EditorPartPoint)
+        {
+            VehicleEditor? editor = Program.Editor;
+            if (editor == null)
+                return null;
+            return normalVehicleAsmb.Transform(editor.EditingSpace.Asmb2Ecl);
+        }
+        if (Body is not Vehicle vehicle)
+            return null;
+        return normalVehicleAsmb.Transform(vehicle.Asmb2Ego);
     }
 
     // A false result marks the anchor stale, not dead: for part anchors Prune
@@ -219,7 +245,7 @@ internal sealed class Anchor
     // (mesh raycast hits, mesh vertices, the bounding-box center). partLabel is
     // the owner-free description; the vehicle id prefix is derived here so Rehome
     // can rebuild it for a new owner.
-    public static Anchor AtPartLocal(Vehicle vehicle, Part part, double3 offsetPartAsmb, string partLabel)
+    public static Anchor AtPartLocal(Vehicle vehicle, Part part, double3 offsetPartAsmb, string partLabel, double3? normalPartAsmb = null)
     {
         return new Anchor
         {
@@ -227,6 +253,7 @@ internal sealed class Anchor
             Body = vehicle,
             Part = part,
             OffsetPartAsmb = offsetPartAsmb,
+            NormalPartAsmb = normalPartAsmb,
             Label = vehicle.Id + " " + partLabel,
             PartLabel = partLabel,
         };
@@ -244,13 +271,14 @@ internal sealed class Anchor
 
     // Editor twins of the two factories above; no Body, the editing space is
     // reached through Program.Editor at resolve time.
-    public static Anchor AtEditorPartLocal(Part part, double3 offsetPartAsmb, string partLabel)
+    public static Anchor AtEditorPartLocal(Part part, double3 offsetPartAsmb, string partLabel, double3? normalPartAsmb = null)
     {
         return new Anchor
         {
             Kind = AnchorKind.EditorPartPoint,
             Part = part,
             OffsetPartAsmb = offsetPartAsmb,
+            NormalPartAsmb = normalPartAsmb,
             Label = partLabel,
             PartLabel = partLabel,
         };
@@ -282,18 +310,18 @@ internal sealed class Anchor
         if (editor != null)
         {
             if (ReferenceEquals(editor.EditingSpace.Parts?.Find(fullPart.InstanceId), fullPart))
-                return AtEditorPartLocal(Part!, OffsetPartAsmb, PartLabel);
+                return AtEditorPartLocal(Part!, OffsetPartAsmb, PartLabel, NormalPartAsmb);
             foreach (PartTree tree in editor.UnattachedPartTrees)
             {
                 if (ReferenceEquals(tree.Find(fullPart.InstanceId), fullPart))
-                    return AtEditorPartLocal(Part!, OffsetPartAsmb, PartLabel);
+                    return AtEditorPartLocal(Part!, OffsetPartAsmb, PartLabel, NormalPartAsmb);
             }
         }
         foreach (Astronomical astronomical in system.All.AsSpan())
         {
             if (astronomical is Vehicle vehicle
                 && ReferenceEquals(vehicle.Parts?.Find(fullPart.InstanceId), fullPart))
-                return AtPartLocal(vehicle, Part!, OffsetPartAsmb, PartLabel);
+                return AtPartLocal(vehicle, Part!, OffsetPartAsmb, PartLabel, NormalPartAsmb);
         }
         return null;
     }

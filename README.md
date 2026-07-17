@@ -24,6 +24,17 @@ Validated against KSA build version 2026.7.6.4939.
   deflection is visual only). Anchors follow their part across staging and docking
   (watch a separation distance grow after decoupling); only destroying the part
   removes the measurement.
+- **CAD-style snapping** - beyond attach nodes and vertices, points snap to mesh
+  feature edges (slide along a tank rim between its vertices), edge midpoints,
+  fitted rim centers, and the mirror of the previous point across the part's axis
+  for exact antipodal pairs. Same-vehicle ruler measurements additionally report
+  axial and radial components along the stack axis, on the overlay and in the
+  copied text.
+- **Circle** - one click on a circular part edge (tank rim, engine bell exit)
+  reads diameter, radius, and circumference from a fitted circle that tracks the
+  part.
+- **Face angle** - two clicks on part surfaces read the angle between the surface
+  normals (engine cant, fin alignment), live while the vehicle rotates.
 - **Surface** - pin two points to a planet's surface for the great-circle distance,
   chord, and initial bearing; pins track the body's rotation like ground markers.
 - **Editor measuring** - the ruler and protractor also work inside the vehicle
@@ -45,7 +56,7 @@ Measuring in the editor will be revisited further when the announced editor rewo
 
 In the map view or the default flight view, open **View -> Measure**; in the vehicle
 editor, open **Measure -> Show Window** from the menu bar. Pick a tool (Ruler,
-Protractor, Surface) and click in the view to place points. The free-fly and
+Protractor, Surface, Circle, Face angle) and click in the view to place points. The free-fly and
 IVA cameras steer with the left mouse button, so the tool stays inactive there to
 leave their controls untouched. While the tool is armed it owns left clicks, so
 editor part placement is suspended; pause the tool (short right-click) or close

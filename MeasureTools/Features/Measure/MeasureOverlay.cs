@@ -38,6 +38,9 @@ internal static class MeasureOverlay
     // Starts at the interval so the very first armed frame picks immediately.
     private static int _previewFramesSincePick = PreviewPickIntervalFrames;
     private static Anchor? _previewCache;
+    // Circle mode previews an anchor pair: the ring point in _previewCache, the
+    // fitted center here. Null in every other mode.
+    private static Anchor? _previewCacheSecondary;
     private static int _previewStateVersion = -1;
     private static bool _previewEclipticFree;
 
@@ -46,6 +49,7 @@ internal static class MeasureOverlay
     {
         _previewFramesSincePick = PreviewPickIntervalFrames;
         _previewCache = null;
+        _previewCacheSecondary = null;
         _previewStateVersion = -1;
         _previewEclipticFree = false;
     }
@@ -89,6 +93,14 @@ internal static class MeasureOverlay
         {
             DrawSurfaceMeasurement(dl, camera, vpPos, m, color, thickness);
         }
+        else if (m.Mode == MeasureMode.Circle)
+        {
+            DrawCircleMeasurement(dl, camera, vpPos, m, color, thickness);
+        }
+        else if (m.Mode == MeasureMode.FaceAngle)
+        {
+            DrawFaceAngleMeasurement(dl, camera, vpPos, m, color, thickness);
+        }
         else if (m.Mode == MeasureMode.Ruler)
         {
             double3 aEcl = m.Anchors[0].ResolveEcl();
@@ -100,7 +112,13 @@ internal static class MeasureOverlay
             dl.AddLine(in a, in b, color, thickness);
             Dot(dl, a, color);
             Dot(dl, b, color);
-            Label(dl, SegmentLabelPos(a, b), FormatDistance((aEcl - bEcl).Length()));
+            float2 labelPos = SegmentLabelPos(a, b);
+            Label(dl, labelPos, FormatDistance((aEcl - bEcl).Length()));
+            // Same-vehicle part measurements get the CAD-style component line:
+            // along the stack axis and perpendicular to it.
+            if (m.TryGetAxialRadialMeters(out double axial, out double radial))
+                Label(dl, new float2(labelPos.X, labelPos.Y + 15f),
+                    "ax " + FormatDistance(axial) + "  rad " + FormatDistance(radial));
         }
         else if (m.Mode == MeasureMode.Angle)
         {
@@ -122,6 +140,98 @@ internal static class MeasureOverlay
             Label(dl, SegmentLabelPos(apex, a), FormatDistance((armAEcl - apexEcl).Length()));
             Label(dl, SegmentLabelPos(apex, b), FormatDistance((armBEcl - apexEcl).Length()));
         }
+    }
+
+    // Circle measurement: Anchors[0] is the fitted center (carrying the plane
+    // normal), Anchors[1] a rim point; the ring is drawn in 3D so it hugs the
+    // part at any camera angle.
+    private static void DrawCircleMeasurement(ImDrawListPtr dl, Camera camera, float2 vpPos, Measurement m, byte4 color, float thickness)
+    {
+        double3 centerEcl = m.Anchors[0].ResolveEcl();
+        double3 rimEcl = m.Anchors[1].ResolveEcl();
+        double3? normalEcl = m.Anchors[0].ResolveNormalEcl();
+        float2 center = vpPos + camera.EclToScreen(centerEcl);
+        if (Valid(center))
+            Dot(dl, center, color);
+        if (normalEcl != null)
+            DrawWorldCircle(dl, camera, vpPos, centerEcl, rimEcl - centerEcl, normalEcl.Value, color, thickness);
+        float2 rim = vpPos + camera.EclToScreen(rimEcl);
+        float2 labelAnchor = Valid(rim) ? rim : center;
+        if (Valid(labelAnchor))
+            Label(dl, new float2(labelAnchor.X + 12f, labelAnchor.Y - 16f), "d " + FormatDistance(m.CircleDiameterMeters()));
+    }
+
+    // FaceAngle measurement: dots on both sampled points, their surface normals
+    // as arrows, a thin connector, and the live angle between the normals.
+    private static void DrawFaceAngleMeasurement(ImDrawListPtr dl, Camera camera, float2 vpPos, Measurement m, byte4 color, float thickness)
+    {
+        double3 aEcl = m.Anchors[0].ResolveEcl();
+        double3 bEcl = m.Anchors[1].ResolveEcl();
+        float2 a = vpPos + camera.EclToScreen(aEcl);
+        float2 b = vpPos + camera.EclToScreen(bEcl);
+        if (Valid(a))
+            Dot(dl, a, color);
+        if (Valid(b))
+            Dot(dl, b, color);
+        DrawNormalArrow(dl, camera, vpPos, aEcl, m.Anchors[0].ResolveNormalEcl(), color, thickness);
+        DrawNormalArrow(dl, camera, vpPos, bEcl, m.Anchors[1].ResolveNormalEcl(), color, thickness);
+        if (!Valid(a) || !Valid(b))
+            return;
+        dl.AddLine(in a, in b, color, 1f);
+        double angle = m.FaceAngleRadians();
+        Label(dl, SegmentLabelPos(a, b),
+            double.IsNaN(angle) ? "undefined" : RadianReference.FromRadians(angle).ToStringDegrees());
+    }
+
+    // A 3D circle from its center, a radius vector in the plane, and the plane
+    // normal, projected as a NaN-gapped polyline like the construction plane.
+    private static void DrawWorldCircle(ImDrawListPtr dl, Camera camera, float2 vpPos, double3 centerEcl, double3 radiusVecEcl, double3 normalEcl, byte4 color, float thickness)
+    {
+        double3 u = radiusVecEcl;
+        double3 w = double3.Cross(normalEcl.NormalizeOrZero(), u);
+        if (w.LengthSquared() < 1e-12)
+            return;
+        const int segments = 48;
+        float2 prev = default;
+        bool hasPrev = false;
+        for (int i = 0; i <= segments; i++)
+        {
+            double angle = Math.PI * 2.0 * i / segments;
+            double3 p = centerEcl + u * Math.Cos(angle) + w * Math.Sin(angle);
+            float2 s = vpPos + camera.EclToScreen(p);
+            if (Valid(s))
+            {
+                if (hasPrev)
+                    dl.AddLine(in prev, in s, color, thickness);
+                prev = s;
+                hasPrev = true;
+            }
+            else
+            {
+                hasPrev = false;
+            }
+        }
+    }
+
+    // A surface normal as a short arrow whose screen length is roughly constant
+    // (about 40 px), so it reads the same at any zoom.
+    private static void DrawNormalArrow(ImDrawListPtr dl, Camera camera, float2 vpPos, double3 originEcl, double3? normalEcl, byte4 color, float thickness)
+    {
+        if (normalEcl == null)
+            return;
+        double distance = (originEcl - camera.PositionEcl).Length();
+        if (!(distance > 0.0))
+            return;
+        double pxPerMeter = camera.GetObjectDiameterPixelsAsDouble(1.0, distance);
+        if (!(pxPerMeter > 1e-9))
+            return;
+        double3 tipEcl = originEcl + normalEcl.Value * (40.0 / pxPerMeter);
+        float2 a = vpPos + camera.EclToScreen(originEcl);
+        float2 b = vpPos + camera.EclToScreen(tipEcl);
+        if (!Valid(a) || !Valid(b))
+            return;
+        dl.AddLine(in a, in b, color, thickness);
+        dl.AddCircleFilled(in b, 3f, color);
     }
 
     // Surface measurement: the great-circle arc over the body, pins at both ends,
@@ -284,7 +394,17 @@ internal static class MeasureOverlay
             || _previewStateVersion != MeasureState.StateVersion
             || _previewEclipticFree != eclipticFree)
         {
-            _previewCache = MapPicker.Pick(viewport, mouseViewport, eclipticFree);
+            if (MeasureState.Mode == MeasureMode.Circle)
+            {
+                MapPicker.PickCircle(viewport, mouseViewport, out Anchor? circleCenter, out Anchor? circleRim);
+                _previewCache = circleRim;
+                _previewCacheSecondary = circleCenter;
+            }
+            else
+            {
+                _previewCache = MapPicker.Pick(viewport, mouseViewport, eclipticFree);
+                _previewCacheSecondary = null;
+            }
             _previewFramesSincePick = 0;
             _previewStateVersion = MeasureState.StateVersion;
             _previewEclipticFree = eclipticFree;
@@ -310,6 +430,25 @@ internal static class MeasureOverlay
         float2 cursor = Project(camera, vpPos, preview);
         if (!Valid(cursor))
             return;
+
+        // Circle mode previews the candidate ring with its live diameter; there
+        // is no pending flow and no generic snap highlight.
+        if (MeasureState.Mode == MeasureMode.Circle)
+        {
+            Anchor? circleCenter = _previewCacheSecondary;
+            if (circleCenter != null)
+            {
+                double3 centerEcl = circleCenter.ResolveEcl();
+                double3 rimEcl = preview.ResolveEcl();
+                double3? normalEcl = circleCenter.ResolveNormalEcl();
+                if (normalEcl != null)
+                    DrawWorldCircle(dl, camera, vpPos, centerEcl, rimEcl - centerEcl, normalEcl.Value, PendingColor, 2.4f);
+                dl.AddCircleFilled(in cursor, 3.5f, PreviewColor);
+                Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f),
+                    "d " + FormatDistance((rimEcl - centerEcl).Length() * 2.0));
+            }
+            return;
+        }
 
         DrawSnapHighlight(dl, camera, viewport, vpPos, cursor, preview, _previewEclipticFree);
 
@@ -337,6 +476,21 @@ internal static class MeasureOverlay
                     body, pending[0].Latitude, pending[0].Longitude, preview.Latitude, preview.Longitude);
                 Label(dl, SegmentLabelPos(pendingScreen[0], cursor), FormatDistance(meters));
             }
+        }
+        else if (MeasureState.Mode == MeasureMode.FaceAngle)
+        {
+            // First face sampled, cursor previews the second: both normals as
+            // arrows plus the live angle between them.
+            float2 a = pendingScreen[0];
+            dl.AddLine(in a, in cursor, PendingColor, 1f);
+            double3? n0 = pending[0].ResolveNormalEcl();
+            double3? n1 = preview.ResolveNormalEcl();
+            DrawNormalArrow(dl, camera, vpPos, pending[0].ResolveEcl(), n0, PendingColor, 2.4f);
+            DrawNormalArrow(dl, camera, vpPos, preview.ResolveEcl(), n1, PendingColor, 2.4f);
+            string text = n0 != null && n1 != null
+                ? RadianReference.FromRadians(Measurement.AngleBetweenNormals(n0.Value, n1.Value)).ToStringDegrees()
+                : "undefined";
+            Label(dl, SegmentLabelPos(a, cursor), text);
         }
         else if (MeasureState.Mode == MeasureMode.Angle && pending.Count == 1)
         {

@@ -141,6 +141,23 @@ internal static class Patch_MouseButton
 
             Viewport viewport = Program.MainViewport;
             float2 mouseViewport = ImGui.GetIO().MousePos - viewport.Position;
+            // Circle mode settles a full measurement (center + rim pair) in one
+            // click and so bypasses the single-anchor Pick/pending flow.
+            if (MeasureState.Mode == MeasureMode.Circle)
+            {
+                if (MapPicker.PickCircle(viewport, mouseViewport, out Anchor? center, out Anchor? rim)
+                    && center != null && rim != null)
+                {
+                    MeasureState.AddCircle(center, rim);
+                }
+                else if (DebugConfig.Measure)
+                {
+                    DefaultCategory.Log.Debug(
+                        $"[MeasureTools] Circle click at {mouseViewport} found no circular edge, click consumed.");
+                }
+                _leftPressConsumed = true;
+                return false;
+            }
             Anchor? anchor = MapPicker.Pick(viewport, mouseViewport, eclipticFree);
             if (anchor != null)
             {

@@ -84,6 +84,7 @@ public sealed class Mod
         MeasureState.Reset();
         MeasureWindow.ResetStatic();
         MeasureOverlay.Reset();
+        MeshFeatureCache.Reset();
         Patch_MouseButton.Reset();
         LogHelper.Reset();
 #if DEBUG
