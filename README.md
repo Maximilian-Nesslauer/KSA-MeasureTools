@@ -55,6 +55,8 @@ Validated against KSA build version 2026.7.6.4939.
   match the vehicle you are measuring (green lines on a red rocket, red on a
   green one).
 
+<img src="images/MeasureToolsParts.png" width="480" alt="Part-level measuring on a rocket: tank diameter from a fitted rim circle, stack height with axial and radial components, booster clearance, and engine cant angles">
+
 ## Usage
 
 In the map view or the default flight view, open **View -> Measure**; in the vehicle
