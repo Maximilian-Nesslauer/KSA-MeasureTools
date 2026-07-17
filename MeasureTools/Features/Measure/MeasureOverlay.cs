@@ -82,7 +82,7 @@ internal static class MeasureOverlay
     private static void DrawMeasurement(ImDrawListPtr dl, Camera camera, float2 vpPos, Measurement m, bool highlighted)
     {
         byte4 color = highlighted ? HighlightColor : MeasureColor;
-        float thickness = highlighted ? 3.5f : 2f;
+        float thickness = highlighted ? 5.25f : 3f;
         // Each anchor is resolved once into a local; ResolveEcl does a matrix or trig
         // transform, and the value is reused for both the screen point and the metric.
         if (m.Mode == MeasureMode.Surface)
@@ -320,7 +320,7 @@ internal static class MeasureOverlay
         {
             // One pending point: rubber-band line with the live distance.
             float2 a = pendingScreen[0];
-            dl.AddLine(in a, in cursor, PendingColor, 1.6f);
+            dl.AddLine(in a, in cursor, PendingColor, 2.4f);
             double meters = (pending[0].ResolveEcl() - preview.ResolveEcl()).Length();
             Label(dl, SegmentLabelPos(a, cursor), FormatDistance(meters));
         }
@@ -332,7 +332,7 @@ internal static class MeasureOverlay
                 && ReferenceEquals(preview.Body, body))
             {
                 double3 centerEcl = body.GetPositionEcl();
-                DrawGreatCircleArc(dl, camera, vpPos, centerEcl, pending[0].ResolveEcl(), preview.ResolveEcl(), PendingColor, 1.6f);
+                DrawGreatCircleArc(dl, camera, vpPos, centerEcl, pending[0].ResolveEcl(), preview.ResolveEcl(), PendingColor, 2.4f);
                 double meters = Measurement.GreatCircleMeters(
                     body, pending[0].Latitude, pending[0].Longitude, preview.Latitude, preview.Longitude);
                 Label(dl, SegmentLabelPos(pendingScreen[0], cursor), FormatDistance(meters));
@@ -342,7 +342,7 @@ internal static class MeasureOverlay
         {
             // Arm placed, cursor previews the apex: live arm length.
             float2 a = pendingScreen[0];
-            dl.AddLine(in cursor, in a, PendingColor, 1.6f);
+            dl.AddLine(in cursor, in a, PendingColor, 2.4f);
             double meters = (pending[0].ResolveEcl() - preview.ResolveEcl()).Length();
             Label(dl, SegmentLabelPos(cursor, a), FormatDistance(meters));
         }
@@ -352,8 +352,8 @@ internal static class MeasureOverlay
             // both arm lengths, like the settled protractor rendering.
             float2 a = pendingScreen[0];
             float2 apex = pendingScreen[1];
-            dl.AddLine(in apex, in a, PendingColor, 1.6f);
-            dl.AddLine(in apex, in cursor, PendingColor, 1.6f);
+            dl.AddLine(in apex, in a, PendingColor, 2.4f);
+            dl.AddLine(in apex, in cursor, PendingColor, 2.4f);
             double3 apexEcl = pending[1].ResolveEcl();
             double3 armAEcl = pending[0].ResolveEcl();
             double3 armBEcl = preview.ResolveEcl();
@@ -444,13 +444,13 @@ internal static class MeasureOverlay
             double3 centerEgo = ((min + max) * 0.5).Transform(fullPart.MatrixAsmb2Ego(in matrixVehicleAsmb2Ego));
             float2 s = vpPos + camera.EgoToScreen(centerEgo);
             if (Valid(s))
-                dl.AddCircleFilled(in s, 4f, FeatureDotColor);
+                dl.AddCircleFilled(in s, 8f, FeatureDotColor);
         }
         for (int i = 0; i < fullPart.Connectors.Count; i++)
         {
             float2 s = vpPos + camera.EgoToScreen(fullPart.Connectors[i].PositionEgo(in matrixVehicleAsmb2Ego));
             if (Valid(s))
-                dl.AddCircle(in s, 6f, FeatureDotColor, 12, 1.5f);
+                dl.AddCircle(in s, 12f, FeatureDotColor, 16, 2f);
         }
     }
 
@@ -525,7 +525,7 @@ internal static class MeasureOverlay
         float2 uB = Unit(armB - apex);
         if (IsZero(uA) || IsZero(uB) || double.IsNaN(angleRadians))
             return;
-        ScreenArc(dl, apex, ArcPx, uA, uB, color, 1.6f);
+        ScreenArc(dl, apex, ArcPx, uA, uB, color, 2.4f);
 
         // Label along the angular bisector of the drawn (projected) arc; the value is
         // the true 3D angle, the projected arc is only a visual cue.

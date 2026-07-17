@@ -194,8 +194,10 @@ internal static class MeasureState
         StateVersion++;
     }
 
-    // Drop state that no longer resolves: a system change clears everything, a
-    // removed body (e.g. deleted vehicle) drops the affected measurement.
+    // Repair or drop state that no longer resolves: a system change clears
+    // everything; a stale part anchor is re-homed to its part's current owner
+    // (staging, docking, editor transitions); only anchors beyond repair (body
+    // gone, part deleted) drop the affected measurement.
     public static void Prune()
     {
         CelestialSystem? system = Universe.CurrentSystem;
@@ -224,24 +226,58 @@ internal static class MeasureState
         }
         for (int i = 0; i < Pending.Count; i++)
         {
-            if (!Pending[i].IsValid(system))
+            if (Pending[i].IsValid(system))
+                continue;
+            Anchor? rehomed = Pending[i].Rehome(system);
+            if (rehomed != null)
             {
                 if (DebugConfig.Measure)
-                    DefaultCategory.Log.Debug($"[MeasureTools] Pending anchor '{Pending[i].Label}' lost its body, pending cleared.");
-                Pending.Clear();
+                    DefaultCategory.Log.Debug($"[MeasureTools] Pending anchor '{Pending[i].Label}' re-homed as '{rehomed.Label}'.");
+                Pending[i] = rehomed;
                 StateVersion++;
-                break;
+                continue;
             }
+            if (DebugConfig.Measure)
+                DefaultCategory.Log.Debug($"[MeasureTools] Pending anchor '{Pending[i].Label}' could not be re-homed (part or body gone), pending cleared.");
+            Pending.Clear();
+            StateVersion++;
+            break;
         }
         for (int i = Measurements.Count - 1; i >= 0; i--)
         {
-            if (!Measurements[i].IsValid(system))
+            if (RehomeAnchors(Measurements[i].Anchors, system))
+                continue;
+            if (DebugConfig.Measure)
+                DefaultCategory.Log.Debug($"[MeasureTools] Measurement #{i + 1} holds an unrecoverable anchor, removed.");
+            // Removing a settled measurement does not change what the next pick
+            // returns, so no StateVersion bump is needed here.
+            Measurements.RemoveAt(i);
+        }
+    }
+
+    // Repairs a measurement's anchors in place: an invalid part anchor whose part
+    // still exists somewhere (decoupled, docked, grabbed in the editor, launched)
+    // is swapped for a re-homed twin. False means an anchor is beyond repair; the
+    // caller removes the measurement.
+    private static bool RehomeAnchors(Anchor[] anchors, CelestialSystem system)
+    {
+        for (int i = 0; i < anchors.Length; i++)
+        {
+            if (anchors[i].IsValid(system))
+                continue;
+            Anchor? rehomed = anchors[i].Rehome(system);
+            if (rehomed == null)
             {
                 if (DebugConfig.Measure)
-                    DefaultCategory.Log.Debug($"[MeasureTools] Measurement #{i + 1} lost an anchored body, removed.");
-                Measurements.RemoveAt(i);
+                    DefaultCategory.Log.Debug($"[MeasureTools] Anchor '{anchors[i].Label}' could not be re-homed (part or body gone).");
+                return false;
             }
+            if (DebugConfig.Measure)
+                DefaultCategory.Log.Debug($"[MeasureTools] Anchor '{anchors[i].Label}' re-homed as '{rehomed.Label}'.");
+            anchors[i] = rehomed;
+            StateVersion++;
         }
+        return true;
     }
 
     // The body whose frame anchors free points and carries the construction plane:

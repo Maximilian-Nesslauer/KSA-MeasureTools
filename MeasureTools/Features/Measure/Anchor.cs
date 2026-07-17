@@ -69,6 +69,13 @@ internal sealed class Anchor
 
     public string Label { get; init; } = "";
 
+    // PartPoint / EditorPartPoint: the owner-free part description ("TankA node
+    // 'top'", "TankA vertex", ...). Flight anchors derive Label by prefixing the
+    // owning vehicle's id, editor anchors use it as is, and Rehome rebuilds the
+    // label from it when the part changes owner (decoupling, docking, editor
+    // transitions).
+    public string PartLabel { get; init; } = "";
+
     public double3 ResolveEcl()
     {
         return Kind switch
@@ -119,8 +126,12 @@ internal sealed class Anchor
         return new double3(double.NaN, double.NaN, double.NaN);
     }
 
-    // The anchor dies with its body (e.g. a deleted vehicle). Identity check via the
-    // system lookup so a same-named replacement does not silently re-anchor.
+    // A false result marks the anchor stale, not dead: for part anchors Prune
+    // tries Rehome first (staging, docking and editor transitions just move the
+    // part to a new owner), and only an unrecoverable anchor drops state. For
+    // body-bound kinds a stale body means the anchor is gone for good. Identity
+    // check via the system lookup so a same-named replacement does not silently
+    // re-anchor.
     public bool IsValid(CelestialSystem system)
     {
         if (Kind == AnchorKind.EditorPartPoint || Kind == AnchorKind.EditorFreePoint)
@@ -132,18 +143,19 @@ internal sealed class Anchor
             return false;
         if (Kind != AnchorKind.PartPoint)
             return true;
-        // A part anchor also dies with its part: decoupling moves the part into a
-        // new debris vehicle (the stored vehicle's tree no longer finds it),
-        // destruction removes it entirely. Subparts never migrate between full
-        // parts, so the full part's presence covers a stored subpart too.
+        // A part anchor turns stale when its part leaves the stored vehicle's
+        // tree (decoupled, docked away, grabbed in the editor); Rehome then finds
+        // the new owner. Subparts never migrate between full parts, so the full
+        // part's presence covers a stored subpart too.
         Part? fullPart = Part?.FullPart;
         return fullPart != null && Body is Vehicle vehicle
             && ReferenceEquals(vehicle.Parts?.Find(fullPart.InstanceId), fullPart);
     }
 
-    // Editor anchors die when the editor closes (Prune drops them a frame after
-    // exit) and, for part anchors, when the part leaves the edited craft. A part
-    // being carried in the hand lives in an unattached tree, still a valid home.
+    // Editor anchors turn stale when the editor closes or the part leaves the
+    // editor trees; part anchors are then re-homed (to the original or launched
+    // vehicle), while editor free points drop for good. A part being carried in
+    // the hand lives in an unattached tree, still a valid home.
     private bool IsValidEditor()
     {
         VehicleEditor? editor = Program.Editor;
@@ -204,8 +216,10 @@ internal sealed class Anchor
     }
 
     // For picks whose position is already known in the part's local asmb frame
-    // (mesh raycast hits, mesh vertices, the bounding-box center).
-    public static Anchor AtPartLocal(Vehicle vehicle, Part part, double3 offsetPartAsmb, string label)
+    // (mesh raycast hits, mesh vertices, the bounding-box center). partLabel is
+    // the owner-free description; the vehicle id prefix is derived here so Rehome
+    // can rebuild it for a new owner.
+    public static Anchor AtPartLocal(Vehicle vehicle, Part part, double3 offsetPartAsmb, string partLabel)
     {
         return new Anchor
         {
@@ -213,7 +227,8 @@ internal sealed class Anchor
             Body = vehicle,
             Part = part,
             OffsetPartAsmb = offsetPartAsmb,
-            Label = label,
+            Label = vehicle.Id + " " + partLabel,
+            PartLabel = partLabel,
         };
     }
 
@@ -221,29 +236,66 @@ internal sealed class Anchor
     // the part matrix once here round-trips exactly through ResolveEcl, and
     // sidesteps Connector.PositionVehicleAsmb applying rotation and translation
     // but not the part scale.
-    public static Anchor AtPartVehicleAsmb(Vehicle vehicle, Part part, double3 posVehicleAsmb, string label)
+    public static Anchor AtPartVehicleAsmb(Vehicle vehicle, Part part, double3 posVehicleAsmb, string partLabel)
     {
         double4x4.Invert(part.MatrixAsmb2VehicleAsmb, out double4x4 inverse);
-        return AtPartLocal(vehicle, part, posVehicleAsmb.Transform(inverse), label);
+        return AtPartLocal(vehicle, part, posVehicleAsmb.Transform(inverse), partLabel);
     }
 
     // Editor twins of the two factories above; no Body, the editing space is
     // reached through Program.Editor at resolve time.
-    public static Anchor AtEditorPartLocal(Part part, double3 offsetPartAsmb, string label)
+    public static Anchor AtEditorPartLocal(Part part, double3 offsetPartAsmb, string partLabel)
     {
         return new Anchor
         {
             Kind = AnchorKind.EditorPartPoint,
             Part = part,
             OffsetPartAsmb = offsetPartAsmb,
-            Label = label,
+            Label = partLabel,
+            PartLabel = partLabel,
         };
     }
 
-    public static Anchor AtEditorPartVehicleAsmb(Part part, double3 posVehicleAsmb, string label)
+    public static Anchor AtEditorPartVehicleAsmb(Part part, double3 posVehicleAsmb, string partLabel)
     {
         double4x4.Invert(part.MatrixAsmb2VehicleAsmb, out double4x4 inverse);
-        return AtEditorPartLocal(part, posVehicleAsmb.Transform(inverse), label);
+        return AtEditorPartLocal(part, posVehicleAsmb.Transform(inverse), partLabel);
+    }
+
+    // A stale part anchor's part usually still exists, just under a new owner:
+    // decoupling and docking move it between vehicles, the editor moves it
+    // between the shared editing tree, the unattached (in-hand) trees, and the
+    // launched vehicle. Part objects survive all of these transitions (verified
+    // against Vehicle.CreateVehicle, Vehicle.MergeFrom, VehicleEditor.Build
+    // and VehicleEditor.Dispose), and the launch rebase only rewrites part
+    // transforms within the vehicle, never the part's own frame, so the stored
+    // offset transfers exactly. Returns the re-homed anchor, or null when the
+    // part is in no tree anymore (truly deleted).
+    public Anchor? Rehome(CelestialSystem system)
+    {
+        if (Kind != AnchorKind.PartPoint && Kind != AnchorKind.EditorPartPoint)
+            return null;
+        Part? fullPart = Part?.FullPart;
+        if (fullPart == null)
+            return null;
+        VehicleEditor? editor = Program.Editor;
+        if (editor != null)
+        {
+            if (ReferenceEquals(editor.EditingSpace.Parts?.Find(fullPart.InstanceId), fullPart))
+                return AtEditorPartLocal(Part!, OffsetPartAsmb, PartLabel);
+            foreach (PartTree tree in editor.UnattachedPartTrees)
+            {
+                if (ReferenceEquals(tree.Find(fullPart.InstanceId), fullPart))
+                    return AtEditorPartLocal(Part!, OffsetPartAsmb, PartLabel);
+            }
+        }
+        foreach (Astronomical astronomical in system.All.AsSpan())
+        {
+            if (astronomical is Vehicle vehicle
+                && ReferenceEquals(vehicle.Parts?.Find(fullPart.InstanceId), fullPart))
+                return AtPartLocal(vehicle, Part!, OffsetPartAsmb, PartLabel);
+        }
+        return null;
     }
 
     public static Anchor EditorFree(double3 offsetFromSpaceEcl)

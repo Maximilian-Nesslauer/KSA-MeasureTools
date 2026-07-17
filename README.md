@@ -21,8 +21,9 @@ Validated against KSA build version 2026.7.6.4939.
   point under the cursor. Anchors stick to their part, so measurements stay correct
   while the vehicle moves and rotates - including between parts of two vehicles
   flying side by side. Engine nozzles measure at their neutral position (gimbal
-  deflection is visual only); a part anchor disappears when its part is decoupled
-  or destroyed.
+  deflection is visual only). Anchors follow their part across staging and docking
+  (watch a separation distance grow after decoupling); only destroying the part
+  removes the measurement.
 - **Surface** - pin two points to a planet's surface for the great-circle distance,
   chord, and initial bearing; pins track the body's rotation like ground markers.
 - **Editor measuring** - the ruler and protractor also work inside the vehicle
@@ -30,8 +31,10 @@ Validated against KSA build version 2026.7.6.4939.
   vertices, hull points) over the craft being built, including parts currently
   held in the hand. Open it from the new top-level **Measure** menu in the editor
   menu bar. Anchors follow parts as they are dragged, so a measurement updates
-  live while building; points on a part disappear when the part is deleted, and
-  all editor measurements clear when the editor closes.
+  live while building, and part measurements carry across the editor boundary in
+  both directions: measure in flight and refine in the editor, or measure while
+  building and keep the numbers through launch. Points on a part disappear when
+  the part is deleted; free points placed in the editor clear when it closes.
 - **Live preview** with snap highlighting, hover-sync between the list and the map,
   and click-to-copy values.
 

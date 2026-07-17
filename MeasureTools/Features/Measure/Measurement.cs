@@ -9,20 +9,11 @@ namespace MeasureTools.Features.Measure;
 // anchored bodies move.
 internal sealed class Measurement
 {
-    // Built once in MeasureState.AddPoint and never mutated afterward.
     public MeasureMode Mode { get; init; }
 
+    // Anchor instances are immutable, but MeasureState.RehomeAnchors swaps array
+    // entries for re-homed twins when a part changes owner.
     public Anchor[] Anchors { get; init; } = Array.Empty<Anchor>();
-
-    public bool IsValid(CelestialSystem system)
-    {
-        foreach (Anchor anchor in Anchors)
-        {
-            if (!anchor.IsValid(system))
-                return false;
-        }
-        return true;
-    }
 
     public double DistanceMeters()
     {

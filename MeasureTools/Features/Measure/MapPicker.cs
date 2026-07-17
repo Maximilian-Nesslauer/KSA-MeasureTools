@@ -200,7 +200,7 @@ internal static class MapPicker
             if (MeasureState.PartFeatureSnapEnabled)
             {
                 float featureDistBefore = feature.ScreenDist;
-                ScanPartFeatures(camera, mouseViewport, tree.Parts, vehicle.Id + " ", in matrixVehicleAsmb2Ego, ref feature);
+                ScanPartFeatures(camera, mouseViewport, tree.Parts, in matrixVehicleAsmb2Ego, ref feature);
                 if (feature.ScreenDist < featureDistBefore)
                     feature.Vehicle = vehicle;
             }
@@ -231,11 +231,11 @@ internal static class MapPicker
             && TryPickVertex(camera, mouseViewport, hit.SubPart, in hit.Matrix, out double3 vertexLocal))
         {
             return Anchor.AtPartLocal(hitVehicle, hit.SubPart, vertexLocal,
-                hitVehicle.Id + " " + hit.FullPart.DisplayName + " vertex");
+                hit.FullPart.DisplayName + " vertex");
         }
 
         return Anchor.AtPartLocal(hitVehicle, hit.SubPart, hit.LocalPos,
-            hitVehicle.Id + " " + hit.FullPart.DisplayName + " surface");
+            hit.FullPart.DisplayName + " surface");
     }
 
     // Editor variant: same snap tiers over the editing space's part tree plus any
@@ -253,9 +253,9 @@ internal static class MapPicker
 
         if (MeasureState.PartFeatureSnapEnabled)
         {
-            ScanPartFeatures(camera, mouseViewport, space.AllParts, "", in matrixVehicleAsmb2Ego, ref feature);
+            ScanPartFeatures(camera, mouseViewport, space.AllParts, in matrixVehicleAsmb2Ego, ref feature);
             foreach (PartTree tree in editor.UnattachedPartTrees)
-                ScanPartFeatures(camera, mouseViewport, tree.Parts, "", in matrixVehicleAsmb2Ego, ref feature);
+                ScanPartFeatures(camera, mouseViewport, tree.Parts, in matrixVehicleAsmb2Ego, ref feature);
         }
         RaycastPartSpan(space.AllParts, in matrixVehicleAsmb2Ego, ray, ref hit);
         foreach (PartTree tree in editor.UnattachedPartTrees)
@@ -304,9 +304,10 @@ internal static class MapPicker
     // a node on the hull silhouette should snap even when the cursor is just off
     // the mesh. Occlusion is ignored; features are sparse and the preview shows
     // which one wins before the click. The caller owns FeatureCandidate.Vehicle
-    // (null in the editor).
+    // (null in the editor); Label is the owner-free part label the anchor
+    // factories prefix themselves.
     private static void ScanPartFeatures(Camera camera, float2 mouseViewport, ReadOnlySpan<Part> parts,
-        string labelPrefix, ref readonly double4x4 matrixVehicleAsmb2Ego, ref FeatureCandidate best)
+        ref readonly double4x4 matrixVehicleAsmb2Ego, ref FeatureCandidate best)
     {
         for (int i = 0; i < parts.Length; i++)
         {
@@ -325,7 +326,7 @@ internal static class MapPicker
                         best.Part = part;
                         best.Position = centerLocal;
                         best.IsVehicleAsmb = false;
-                        best.Label = labelPrefix + part.DisplayName + " center";
+                        best.Label = part.DisplayName + " center";
                         best.ScreenDist = d;
                     }
                 }
@@ -342,7 +343,7 @@ internal static class MapPicker
                     best.Part = part;
                     best.Position = connector.PositionVehicleAsmb;
                     best.IsVehicleAsmb = true;
-                    best.Label = labelPrefix + part.DisplayName + " node '" + connector.Id + "'";
+                    best.Label = part.DisplayName + " node '" + connector.Id + "'";
                     best.ScreenDist = d;
                 }
             }
