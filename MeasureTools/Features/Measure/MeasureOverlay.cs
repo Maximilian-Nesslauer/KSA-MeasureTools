@@ -117,7 +117,7 @@ internal static class MeasureOverlay
             // Same-vehicle part measurements get the CAD-style component line:
             // along the stack axis and perpendicular to it.
             if (m.TryGetAxialRadialMeters(out double axial, out double radial))
-                Label(dl, new float2(labelPos.X, labelPos.Y + 15f),
+                Label(dl, new float2(labelPos.X, labelPos.Y + LabelStackStep()),
                     "ax " + FormatDistance(axial) + "  rad " + FormatDistance(radial));
         }
         else if (m.Mode == MeasureMode.Angle)
@@ -260,7 +260,7 @@ internal static class MeasureOverlay
         Label(dl, labelPos, FormatDistance(m.SurfaceDistanceMeters()));
         string detail = "chord " + FormatDistance((aEcl - bEcl).Length())
             + "  brg " + m.BearingDegrees().ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " deg";
-        Label(dl, new float2(labelPos.X, labelPos.Y + 15f), detail);
+        Label(dl, new float2(labelPos.X, labelPos.Y + LabelStackStep()), detail);
     }
 
     // The great-circle arc between two surface points, sampled along the sphere and
@@ -738,6 +738,14 @@ internal static class MeasureOverlay
         var b1 = new float2(s.X, s.Y + r);
         dl.AddLine(in l1, in r1, color, 1.5f);
         dl.AddLine(in t1, in b1, color, 1.5f);
+    }
+
+    // Vertical step between labels stacked at the same anchor: one text line
+    // plus the plate padding (2 px top and bottom) and a small gap, so the
+    // plates never touch at any font size.
+    private static float LabelStackStep()
+    {
+        return ImGui.GetTextLineHeightWithSpacing() + 6f;
     }
 
     private static void Label(ImDrawListPtr dl, float2 pos, string text)
