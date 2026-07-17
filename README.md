@@ -55,9 +55,6 @@ Validated against KSA build version 2026.7.6.4939.
   match the vehicle you are measuring (green lines on a red rocket, red on a
   green one).
 
-Measuring in the editor will be revisited further when the announced editor rework ships
-([#1](https://github.com/Maximilian-Nesslauer/KSA-MeasureTools/issues/1)).
-
 ## Usage
 
 In the map view or the default flight view, open **View -> Measure**; in the vehicle
