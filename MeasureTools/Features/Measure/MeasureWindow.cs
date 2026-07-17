@@ -21,7 +21,7 @@ internal sealed class MeasureWindow : ImGuiWindow
     public static bool IsOpen => _instance != null && _instance.IsShown;
 
     private MeasureWindow()
-        : base(new float2(460f, 380f), lockAspectRatio: false, show: false)
+        : base(new float2(500f, 460f), lockAspectRatio: false, show: false)
     {
         SetWindowTitle("Measure");
         // Default to the upper left, right of the stock Map View panel, so the
@@ -43,8 +43,7 @@ internal sealed class MeasureWindow : ImGuiWindow
         // measurements are ephemeral, so treat it the same.
         if (!_instance.IsShown)
         {
-            MeasureState.ClearAll();
-            _instance.ResetAutoPreview();
+            _instance.OnClosed();
             if (DebugConfig.Measure)
                 DefaultCategory.Log.Debug("[MeasureTools] Tool closed via title bar, measurements cleared.");
         }
@@ -68,11 +67,19 @@ internal sealed class MeasureWindow : ImGuiWindow
     public void Close()
     {
         _show = false;
-        // Ephemeral by design: leaving the tool clears all measurements.
-        MeasureState.ClearAll();
-        ResetAutoPreview();
+        OnClosed();
         if (DebugConfig.Measure)
             DefaultCategory.Log.Debug("[MeasureTools] Tool closed, measurements cleared.");
+    }
+
+    // Shared teardown for both close paths (Close and the title-bar button):
+    // measurements are ephemeral by design, the combo cache must not outlive
+    // the window, and edited colors persist here.
+    private void OnClosed()
+    {
+        MeasureState.ClearAll();
+        ResetAutoPreview();
+        MeasureColors.SaveIfDirty();
     }
 
     // Drops the cached Auto-combo body so a closed window does not keep a body
@@ -94,63 +101,117 @@ internal sealed class MeasureWindow : ImGuiWindow
         if (!MeasureState.IsSupportedViewMode(viewport.Mode))
             ImGui.TextWrapped("Switch to the map or flight view to place measurements."u8);
 
-        // While paused (short right-click in the view), no tool is selected; picking
-        // a tool re-arms measuring.
-        bool active = MeasureState.ToolActive;
-        if (ImGui.RadioButton("Ruler"u8, active && MeasureState.Mode == MeasureMode.Ruler))
-        {
-            MeasureState.SetMode(MeasureMode.Ruler);
-            MeasureState.SetToolActive(true);
-        }
-        ImGui.SameLine();
-        if (ImGui.RadioButton("Protractor"u8, active && MeasureState.Mode == MeasureMode.Angle))
-        {
-            MeasureState.SetMode(MeasureMode.Angle);
-            MeasureState.SetToolActive(true);
-        }
-        ImGui.SameLine();
-        if (ImGui.RadioButton("Surface"u8, active && MeasureState.Mode == MeasureMode.Surface))
-        {
-            MeasureState.SetMode(MeasureMode.Surface);
-            MeasureState.SetToolActive(true);
-        }
-        if (ImGui.RadioButton("Circle"u8, active && MeasureState.Mode == MeasureMode.Circle))
-        {
-            MeasureState.SetMode(MeasureMode.Circle);
-            MeasureState.SetToolActive(true);
-        }
-        ImGui.SameLine();
-        if (ImGui.RadioButton("Face angle"u8, active && MeasureState.Mode == MeasureMode.FaceAngle))
-        {
-            MeasureState.SetMode(MeasureMode.FaceAngle);
-            MeasureState.SetToolActive(true);
-        }
+        DrawModeToolbar();
+        DrawStatus(viewport);
 
+        if (ImGui.CollapsingHeader("Snapping"u8, ImGuiTreeNodeFlags.DefaultOpen))
+            DrawSnappingSection(viewport);
+
+        int count = MeasureState.Measurements.Count;
+        if (count != _measurementsHeaderCount)
+        {
+            _measurementsHeaderCount = count;
+            // ### keeps the header id stable while the visible count changes.
+            _measurementsHeader = "Measurements (" + count + ")###measurements";
+        }
+        if (ImGui.CollapsingHeader(_measurementsHeader, ImGuiTreeNodeFlags.DefaultOpen))
+            DrawMeasurementList();
+        else
+            MeasureState.HighlightIndex = -1;
+
+        if (ImGui.CollapsingHeader("Colors"u8))
+            DrawColorsSection();
+
+#if DEBUG
+        // Runtime switches for the DebugConfig flags (mutable by design), so
+        // measure/perf logging can be toggled without a rebuild. Performance
+        // logging drives the PerfTracker scopes reporting avg/min/max per 5 s.
+        if (ImGui.CollapsingHeader("Debug logging"u8))
+        {
+            bool logMeasure = DebugConfig.Measure;
+            if (ImGui.Checkbox("Measure events"u8, ref logMeasure))
+                DebugConfig.Measure = logMeasure;
+            ImGui.SameLine();
+            bool logPerformance = DebugConfig.Performance;
+            if (ImGui.Checkbox("Performance"u8, ref logPerformance))
+                DebugConfig.Performance = logPerformance;
+        }
+#endif
+    }
+
+    private int _measurementsHeaderCount = -1;
+    private string _measurementsHeader = "Measurements (0)###measurements";
+
+    // One toolbar button per mode, the active one drawn in the pressed style.
+    // While paused (short right-click in the view) no mode is highlighted;
+    // clicking any button re-arms measuring. A window too narrow for five
+    // buttons splits the row 3 + 2.
+    private static void DrawModeToolbar()
+    {
+        ImGuiStylePtr style = ImGui.GetStyle();
+        float spacing = style.ItemSpacing.X;
+        float available = ImGui.GetContentRegionAvail().X;
+        // "Protractor" is the widest mode label; when five buttons cannot fit
+        // it, both rows are sized as three-button rows (five buttons share four
+        // gaps, three share two).
+        float minWidth = ImGui.CalcTextSize("Protractor").X + style.FramePadding.X * 2f;
+        float fiveAcross = (available - spacing * 4f) / 5f;
+        bool oneRow = fiveAcross >= minWidth;
+        float width = oneRow ? fiveAcross : (available - spacing * 2f) / 3f;
+
+        DrawModeButton("Ruler"u8, MeasureMode.Ruler, width);
+        ImGui.SameLine();
+        DrawModeButton("Protractor"u8, MeasureMode.Angle, width);
+        ImGui.SameLine();
+        DrawModeButton("Surface"u8, MeasureMode.Surface, width);
+        if (oneRow)
+            ImGui.SameLine();
+        DrawModeButton("Circle"u8, MeasureMode.Circle, width);
+        ImGui.SameLine();
+        DrawModeButton("Face angle"u8, MeasureMode.FaceAngle, width);
+    }
+
+    private static void DrawModeButton(ImString label, MeasureMode mode, float width)
+    {
+        bool selected = MeasureState.ToolActive && MeasureState.Mode == mode;
+        if (selected)
+            ImGui.PushStyleColor(ImGuiCol.Button, ImGui.GetStyleColorVec4(ImGuiCol.ButtonActive));
+        if (ImGui.Button(label, new float2(width, 0f)))
+        {
+            MeasureState.SetMode(mode);
+            MeasureState.SetToolActive(true);
+        }
+        if (selected)
+            ImGui.PopStyleColor();
+    }
+
+    private void DrawSnappingSection(Viewport viewport)
+    {
         // Snap and the reference body only apply to ruler/protractor picking;
         // surface mode ray-casts the celestial spheres, circle and face-angle
         // modes have their own part picking.
         bool snapControlsApply = MeasureState.Mode == MeasureMode.Ruler || MeasureState.Mode == MeasureMode.Angle;
-        ImGui.BeginDisabled(!active || !snapControlsApply);
+        ImGui.BeginDisabled(!MeasureState.ToolActive || !snapControlsApply);
         bool snap = MeasureState.SnapEnabled;
-        if (ImGui.Checkbox("Snap to bodies and orbit lines"u8, ref snap))
+        if (ImGui.Checkbox("Bodies and orbit lines"u8, ref snap))
             MeasureState.SetSnapEnabled(snap);
         // Part snapping is a refinement of general snapping, so the sub-controls
         // disable together with the master snap toggle.
         ImGui.BeginDisabled(!snap);
         bool snapParts = MeasureState.PartSnapEnabled;
-        if (ImGui.Checkbox("Snap to parts"u8, ref snapParts))
+        if (ImGui.Checkbox("Parts"u8, ref snapParts))
             MeasureState.SetPartSnapEnabled(snapParts);
         if (ImGui.IsItemHovered())
             ImGuiHelper.DrawTooltip("Pick points on vehicle parts: exact surface points under the cursor,\nrefined by the tiers below. Off: vehicles snap at their center marker only."u8);
         ImGui.Indent();
         ImGui.BeginDisabled(!snapParts);
         bool snapNodes = MeasureState.PartFeatureSnapEnabled;
-        if (ImGui.Checkbox("Attach nodes, centers, rim centers"u8, ref snapNodes))
+        if (ImGui.Checkbox("Nodes, centers, rims"u8, ref snapNodes))
             MeasureState.SetPartFeatureSnapEnabled(snapNodes);
         if (ImGui.IsItemHovered())
             ImGuiHelper.DrawTooltip("Point targets: attach nodes, part centers, fitted rim centers,\nand the mirror of the previous point across the part axis."u8);
         bool snapVertices = MeasureState.PartVertexSnapEnabled;
-        if (ImGui.Checkbox("Mesh vertices and edges"u8, ref snapVertices))
+        if (ImGui.Checkbox("Vertices and edges"u8, ref snapVertices))
             MeasureState.SetPartVertexSnapEnabled(snapVertices);
         if (ImGui.IsItemHovered())
             ImGuiHelper.DrawTooltip("Vertices, feature-edge midpoints, and sliding along feature edges\n(tank rims and other sharp or boundary edges)."u8);
@@ -160,30 +221,47 @@ internal sealed class MeasureWindow : ImGuiWindow
         // In the editor free points anchor to the editing space, so the system
         // reference bodies do not apply.
         if (Program.Editor != null)
+        {
             ImGui.TextDisabled("Reference: edited vehicle"u8);
+        }
         else
+        {
+            ImGui.Text("Reference"u8);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1f);
             DrawReferenceCombo(viewport);
+        }
         ImGui.EndDisabled();
+    }
 
-        ImGui.Separator();
-        DrawStatus(viewport);
+    private static void DrawColorsSection()
+    {
+        // The preview shades derive from Pending by alpha, so one row covers the
+        // whole pending/preview family.
+        bool changed = false;
+        changed |= DrawColorRow("Lines"u8, ref MeasureColors.Measure);
+        changed |= DrawColorRow("Line highlight"u8, ref MeasureColors.Highlight);
+        changed |= DrawColorRow("Pending and preview"u8, ref MeasureColors.Pending);
+        changed |= DrawColorRow("Snap markers"u8, ref MeasureColors.FeatureDot);
+        changed |= DrawColorRow("Construction plane"u8, ref MeasureColors.Plane);
+        changed |= DrawColorRow("Label text"u8, ref MeasureColors.LabelText);
+        changed |= DrawColorRow("Label background"u8, ref MeasureColors.LabelPlate);
+        if (changed)
+            MeasureColors.MarkDirty();
+        if (ImGui.SmallButton("Reset colors"u8))
+        {
+            MeasureColors.Reset();
+            MeasureColors.MarkDirty();
+        }
+    }
 
-        ImGui.SeparatorText("Measurements"u8);
-        DrawMeasurementList();
-
-#if DEBUG
-        // Runtime switches for the DebugConfig flags (mutable by design), so
-        // measure/perf logging can be toggled without a rebuild. Performance
-        // logging drives the PerfTracker scopes reporting avg/min/max per 5 s.
-        ImGui.SeparatorText("Debug logging"u8);
-        bool logMeasure = DebugConfig.Measure;
-        if (ImGui.Checkbox("Measure events"u8, ref logMeasure))
-            DebugConfig.Measure = logMeasure;
-        ImGui.SameLine();
-        bool logPerformance = DebugConfig.Performance;
-        if (ImGui.Checkbox("Performance"u8, ref logPerformance))
-            DebugConfig.Performance = logPerformance;
-#endif
+    private static bool DrawColorRow(ImString label, ref byte4 color)
+    {
+        float4 value = MeasureColors.ToFloat4(color);
+        if (!ImGui.ColorEdit4(label, ref value, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.AlphaBar | ImGuiColorEditFlags.AlphaPreviewHalf))
+            return false;
+        color = MeasureColors.FromFloat4(value);
+        return true;
     }
 
     // The "Auto (...)" preview rebuilt only when the resolved body changes, not
@@ -202,7 +280,7 @@ internal sealed class MeasureWindow : ImGuiWindow
             _autoPreviewText = "Auto (" + (auto?.Id ?? "none") + ")";
         }
         string preview = MeasureState.ReferenceOverride?.Id ?? _autoPreviewText;
-        if (!ImGui.BeginCombo("Reference"u8, preview))
+        if (!ImGui.BeginCombo("##reference"u8, preview))
             return;
         if (ImGui.Selectable("Auto"u8, MeasureState.ReferenceOverride == null))
             MeasureState.SetReferenceOverride(null);
@@ -240,6 +318,7 @@ internal sealed class MeasureWindow : ImGuiWindow
             MeasureMode.FaceAngle => have == 0
                 ? "Click a part surface: sample the first face"
                 : "Click a part surface: sample the second face",
+            // MeasureMode.Angle, the three-point protractor.
             _ => have switch
             {
                 0 => "Click in the view: place the first arm",
@@ -280,7 +359,8 @@ internal sealed class MeasureWindow : ImGuiWindow
             return;
         }
 
-        // Clear all sits right-aligned above the table.
+        // Clear all sits right-aligned above the table; 10f covers the small
+        // button's frame padding.
         float clearWidth = ImGui.CalcTextSize("Clear all").X + 10f;
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + MathF.Max(0f, ImGui.GetContentRegionAvail().X - clearWidth));
         if (ImGui.SmallButton("Clear all"u8))
@@ -291,7 +371,7 @@ internal sealed class MeasureWindow : ImGuiWindow
             return;
         }
 
-        if (!ImGui.BeginTable("measurements"u8, 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        if (!ImGui.BeginTable("measurements"u8, 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.Resizable))
             return;
         ImGui.TableSetupColumn(""u8, ImGuiTableColumnFlags.WidthFixed);
         ImGui.TableSetupColumn("Value"u8, ImGuiTableColumnFlags.WidthFixed, 120f);
@@ -321,11 +401,11 @@ internal sealed class MeasureWindow : ImGuiWindow
             ImGui.PushStyleVar(ImGuiStyleVar.SelectableTextAlign, new float2(1f, 0f));
             bool copy = ImGui.Selectable(value);
             ImGui.PopStyleVar();
-            hovered |= CopyTooltipOnHover();
+            hovered |= CopyTooltipOnHover(endpoints);
 
             ImGui.TableNextColumn();
             copy |= ImGui.Selectable(endpoints);
-            hovered |= CopyTooltipOnHover();
+            hovered |= CopyTooltipOnHover(endpoints);
 
             if (copy)
             {
@@ -350,12 +430,13 @@ internal sealed class MeasureWindow : ImGuiWindow
         }
     }
 
-    // Tooltip for the last drawn item; returns whether it was hovered.
-    private static bool CopyTooltipOnHover()
+    // Tooltip for the last drawn item; returns whether it was hovered. Shows the
+    // full endpoints text, since the Points column truncates long part names.
+    private static bool CopyTooltipOnHover(string endpoints)
     {
         if (!ImGui.IsItemHovered())
             return false;
-        ImGuiHelper.DrawTooltip("Click to copy"u8);
+        ImGuiHelper.DrawTooltip(endpoints + "\nClick to copy");
         return true;
     }
 

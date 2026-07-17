@@ -48,6 +48,10 @@ Validated against KSA build version 2026.7.6.4939.
   the part is deleted; free points placed in the editor clear when it closes.
 - **Live preview** with snap highlighting, hover-sync between the list and the map,
   and click-to-copy values.
+- **Configurable colors** - every overlay color (lines, labels, snap markers,
+  construction plane) has a color picker in the window's Colors section and
+  persists across sessions, so measurements stay readable against any vehicle
+  paint job.
 
 Measuring in the editor will be revisited further when the announced editor rework ships
 ([#1](https://github.com/Maximilian-Nesslauer/KSA-MeasureTools/issues/1)).

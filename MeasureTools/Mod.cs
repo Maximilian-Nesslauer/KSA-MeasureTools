@@ -26,6 +26,8 @@ public sealed class Mod
                 $"[MeasureTools] Tested against {TestedGameVersion}, current is {gameVersion}. " +
                 "Some features may not work correctly.");
 
+        MeasureColors.Load();
+
         _harmony = new Harmony("com.maxi.measuretools");
         // Apply each patch on its own so a future game change to one target does not
         // stop the other from being patched.
@@ -84,6 +86,8 @@ public sealed class Mod
         _harmony?.UnpatchAll(_harmony.Id);
         _harmony = null;
 
+        MeasureColors.SaveIfDirty();
+        MeasureColors.Reset();
         MeasureState.Reset();
         MeasureWindow.ResetStatic();
         MeasureOverlay.Reset();

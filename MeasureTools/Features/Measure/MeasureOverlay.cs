@@ -13,19 +13,19 @@ namespace MeasureTools.Features.Measure;
 // wrapped so a camera or projection change can never unwind into the render path.
 internal static class MeasureOverlay
 {
-    private static readonly byte4 MeasureColor = new byte4(120, 220, 160, 235);
-    // List-hover highlight: brighter and thicker so the row-to-line mapping is obvious.
-    private static readonly byte4 HighlightColor = new byte4(215, 255, 235, 255);
-    private static readonly byte4 PendingColor = new byte4(255, 220, 110, 245);
-    private static readonly byte4 PreviewColor = new byte4(255, 220, 110, 160);
-    private static readonly byte4 PreviewFaint = new byte4(255, 220, 110, 80);
-    private static readonly byte4 PlaneColor = new byte4(150, 170, 200, 70);
-    // Snappable-feature markers on the hovered part: green like settled
-    // measurements so they stand apart from the yellow pending/preview set, and
-    // opaque enough to read against a lit hull.
-    private static readonly byte4 FeatureDotColor = new byte4(120, 220, 160, 200);
-    private static readonly byte4 LabelColor = new byte4(236, 234, 222, 255);
-    private static readonly byte4 LabelPlate = new byte4(8, 12, 16, 175);
+    // The scheme lives in MeasureColors (user-configurable through the window,
+    // persisted); these aliases keep the draw code readable. Highlight is the
+    // brighter list-hover variant; FeatureDot marks snappable features on the
+    // hovered part, distinct from the pending/preview family.
+    private static byte4 MeasureColor => MeasureColors.Measure;
+    private static byte4 HighlightColor => MeasureColors.Highlight;
+    private static byte4 PendingColor => MeasureColors.Pending;
+    private static byte4 PreviewColor => MeasureColors.Preview;
+    private static byte4 PreviewFaint => MeasureColors.PreviewFaint;
+    private static byte4 PlaneColor => MeasureColors.Plane;
+    private static byte4 FeatureDotColor => MeasureColors.FeatureDot;
+    private static byte4 LabelColor => MeasureColors.LabelText;
+    private static byte4 LabelPlate => MeasureColors.LabelPlate;
 
     private const float ArcPx = 36f;
     private const int PlaneSegments = 64;
