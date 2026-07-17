@@ -7,9 +7,9 @@ using MeasureTools.Core;
 namespace MeasureTools.Features.Measure;
 
 // Draws the measurements, the in-progress placement preview, the snap highlight and
-// the free-placement construction plane onto the map view, on the background draw
-// list (the stock body-label and DeltaVMap overlay pattern). Everything is wrapped
-// so a camera or projection change can never unwind into the render path.
+// the free-placement construction plane onto the active view, on the background draw
+// list, the same list the stock body-label and orbit overlays use. Everything is
+// wrapped so a camera or projection change can never unwind into the render path.
 internal static class MeasureOverlay
 {
     private static readonly byte4 MeasureColor = new byte4(120, 220, 160, 235);
@@ -52,7 +52,7 @@ internal static class MeasureOverlay
         {
             if (!MeasureWindow.IsOpen)
                 return;
-            if (viewport.Mode != CameraMode.Map)
+            if (!MeasureState.IsSupportedViewMode(viewport.Mode))
                 return;
             if (Universe.CurrentSystem == null)
                 return;
@@ -68,8 +68,9 @@ internal static class MeasureOverlay
         }
         catch (Exception ex)
         {
-            // Key on the exception type so a second, different failure mode is not
-            // silenced by the first.
+            // Spam control for this per-frame path: the first exception of each type
+            // logs a full stack via {ex}, then stays quiet. Two different sites that
+            // throw the same type share one log line, which is the accepted tradeoff.
             LogHelper.ErrorOnce("overlay-" + ex.GetType().Name, $"[MeasureTools] Overlay draw failed: {ex}");
         }
     }
@@ -78,26 +79,33 @@ internal static class MeasureOverlay
     {
         byte4 color = highlighted ? HighlightColor : MeasureColor;
         float thickness = highlighted ? 3.5f : 2f;
+        // Each anchor is resolved once into a local; ResolveEcl does a matrix or trig
+        // transform, and the value is reused for both the screen point and the metric.
         if (m.Mode == MeasureMode.Surface)
         {
             DrawSurfaceMeasurement(dl, camera, vpPos, m, color, thickness);
         }
         else if (m.Mode == MeasureMode.Ruler)
         {
-            float2 a = Project(camera, vpPos, m.Anchors[0]);
-            float2 b = Project(camera, vpPos, m.Anchors[1]);
+            double3 aEcl = m.Anchors[0].ResolveEcl();
+            double3 bEcl = m.Anchors[1].ResolveEcl();
+            float2 a = vpPos + camera.EclToScreen(aEcl);
+            float2 b = vpPos + camera.EclToScreen(bEcl);
             if (!Valid(a) || !Valid(b))
                 return;
             dl.AddLine(in a, in b, color, thickness);
             Dot(dl, a, color);
             Dot(dl, b, color);
-            Label(dl, SegmentLabelPos(a, b), FormatDistance(m.DistanceMeters()));
+            Label(dl, SegmentLabelPos(a, b), FormatDistance((aEcl - bEcl).Length()));
         }
-        else
+        else if (m.Mode == MeasureMode.Angle)
         {
-            float2 a = Project(camera, vpPos, m.Anchors[0]);
-            float2 apex = Project(camera, vpPos, m.Anchors[1]);
-            float2 b = Project(camera, vpPos, m.Anchors[2]);
+            double3 armAEcl = m.Anchors[0].ResolveEcl();
+            double3 apexEcl = m.Anchors[1].ResolveEcl();
+            double3 armBEcl = m.Anchors[2].ResolveEcl();
+            float2 a = vpPos + camera.EclToScreen(armAEcl);
+            float2 apex = vpPos + camera.EclToScreen(apexEcl);
+            float2 b = vpPos + camera.EclToScreen(armBEcl);
             if (!Valid(a) || !Valid(apex) || !Valid(b))
                 return;
             dl.AddLine(in apex, in a, color, thickness);
@@ -105,11 +113,10 @@ internal static class MeasureOverlay
             Dot(dl, a, color);
             Dot(dl, apex, color);
             Dot(dl, b, color);
-            DrawAngleArcAndLabel(dl, apex, a, b, m.AngleRadians(), color);
+            DrawAngleArcAndLabel(dl, apex, a, b, Measurement.AngleBetween(apexEcl, armAEcl, armBEcl), color);
             // Both arms carry their length, like ruler segments.
-            double3 apexEcl = m.Anchors[1].ResolveEcl();
-            Label(dl, SegmentLabelPos(apex, a), FormatDistance((m.Anchors[0].ResolveEcl() - apexEcl).Length()));
-            Label(dl, SegmentLabelPos(apex, b), FormatDistance((m.Anchors[2].ResolveEcl() - apexEcl).Length()));
+            Label(dl, SegmentLabelPos(apex, a), FormatDistance((armAEcl - apexEcl).Length()));
+            Label(dl, SegmentLabelPos(apex, b), FormatDistance((armBEcl - apexEcl).Length()));
         }
     }
 
@@ -145,19 +152,58 @@ internal static class MeasureOverlay
     // The great-circle arc between two surface points, sampled along the sphere and
     // occlusion-culled: samples on the far hemisphere (facing away from the camera)
     // break the polyline instead of drawing through the planet disc.
-    private static void DrawGreatCircleArc(ImDrawListPtr dl, Camera camera, float2 vpPos, double3 centerEcl, double3 aEcl, double3 bEcl, byte4 color, float thickness)
+    // Shared great-circle setup for the two surface-draw helpers: the radial unit
+    // vector at the first point, the rotation axis, the separation angle and the two
+    // radii. Returns false when either point sits at the body center (no radial
+    // direction); the callers handle the zero-axis (coincident/antipodal) case
+    // themselves, since they want different fallbacks.
+    private readonly struct GreatCircleBasis
     {
+        public readonly double3 Ua;
+        public readonly double3 Axis;
+        public readonly double Angle;
+        public readonly double Ra;
+        public readonly double Rb;
+
+        public GreatCircleBasis(double3 ua, double3 axis, double angle, double ra, double rb)
+        {
+            Ua = ua;
+            Axis = axis;
+            Angle = angle;
+            Ra = ra;
+            Rb = rb;
+        }
+
+        public bool AxisIsZero => Axis.X == 0.0 && Axis.Y == 0.0 && Axis.Z == 0.0;
+    }
+
+    private static bool TryGreatCircleBasis(double3 centerEcl, double3 aEcl, double3 bEcl, out GreatCircleBasis basis)
+    {
+        basis = default;
         double3 da = aEcl - centerEcl;
         double3 db = bEcl - centerEcl;
         double ra = da.Length();
         double rb = db.Length();
         if (!(ra > 0.0) || !(rb > 0.0))
-            return;
+            return false;
         double3 ua = da * (1.0 / ra);
         double3 ub = db * (1.0 / rb);
         double angle = Math.Acos(Math.Clamp(double3.Dot(ua, ub), -1.0, 1.0));
         double3 axis = double3.Cross(ua, ub).NormalizeOrZero();
-        if (angle < 1e-9 || (axis.X == 0.0 && axis.Y == 0.0 && axis.Z == 0.0))
+        basis = new GreatCircleBasis(ua, axis, angle, ra, rb);
+        return true;
+    }
+
+    private static void DrawGreatCircleArc(ImDrawListPtr dl, Camera camera, float2 vpPos, double3 centerEcl, double3 aEcl, double3 bEcl, byte4 color, float thickness)
+    {
+        if (!TryGreatCircleBasis(centerEcl, aEcl, bEcl, out GreatCircleBasis basis))
+            return;
+        double3 ua = basis.Ua;
+        double3 axis = basis.Axis;
+        double angle = basis.Angle;
+        double ra = basis.Ra;
+        double rb = basis.Rb;
+        if (angle < 1e-9 || basis.AxisIsZero)
         {
             // Coincident or antipodal points: no unique great circle, draw nothing
             // (the endpoint dots and the label still render).
@@ -192,23 +238,17 @@ internal static class MeasureOverlay
     // Screen position of the arc's halfway point, for label placement.
     private static float2 GreatCircleMidScreen(Camera camera, float2 vpPos, double3 centerEcl, double3 aEcl, double3 bEcl)
     {
-        double3 da = aEcl - centerEcl;
-        double3 db = bEcl - centerEcl;
-        double ra = da.Length();
-        double rb = db.Length();
-        if (!(ra > 0.0) || !(rb > 0.0))
+        if (!TryGreatCircleBasis(centerEcl, aEcl, bEcl, out GreatCircleBasis basis))
             return new float2(float.NaN, float.NaN);
-        double3 ua = da * (1.0 / ra);
-        double3 ub = db * (1.0 / rb);
-        double angle = Math.Acos(Math.Clamp(double3.Dot(ua, ub), -1.0, 1.0));
-        double3 axis = double3.Cross(ua, ub).NormalizeOrZero();
-        if (axis.X == 0.0 && axis.Y == 0.0 && axis.Z == 0.0)
+        // Coincident or antipodal points: fall back to the first endpoint so the label
+        // still has an anchor.
+        if (basis.AxisIsZero)
             return vpPos + camera.EclToScreen(aEcl);
-        double3 mid = Rotate(ua, axis, angle * 0.5);
-        return vpPos + camera.EclToScreen(centerEcl + mid * ((ra + rb) * 0.5));
+        double3 mid = Rotate(basis.Ua, basis.Axis, basis.Angle * 0.5);
+        return vpPos + camera.EclToScreen(centerEcl + mid * ((basis.Ra + basis.Rb) * 0.5));
     }
 
-    // Rodrigues' rotation about a unit axis (DeltaVMap pattern).
+    // Rodrigues' rotation of a vector about a unit axis by the given angle.
     private static double3 Rotate(double3 v, double3 axis, double angle)
     {
         double c = Math.Cos(angle);
@@ -221,19 +261,20 @@ internal static class MeasureOverlay
     // construction plane when the cursor would place a free point.
     private static void DrawPlacementPreview(ImDrawListPtr dl, Camera camera, Viewport viewport, float2 vpPos)
     {
-        if (!MeasureState.IsArmed || ImGui.GetIO().WantCaptureMouse)
+        var io = ImGui.GetIO();
+        if (!MeasureState.IsArmed || io.WantCaptureMouse)
         {
             // Not previewing (tool disarmed or cursor over UI): drop the cache so the
-            // first frame back over the map picks fresh.
+            // first frame back over the view picks fresh.
             Reset();
             return;
         }
 
-        float2 mouseViewport = ImGui.GetIO().MousePos - vpPos;
+        float2 mouseViewport = io.MousePos - vpPos;
         // Ctrl previews (and places) a free point on the ecliptic plane even where
         // snapping would win; a modifier change re-picks immediately so the preview
         // flips with the key.
-        bool eclipticFree = ImGui.GetIO().KeyCtrl;
+        bool eclipticFree = io.KeyCtrl;
         _previewFramesSincePick++;
         if (_previewFramesSincePick >= PreviewPickIntervalFrames
             || _previewStateVersion != MeasureState.StateVersion
@@ -293,7 +334,7 @@ internal static class MeasureOverlay
                 Label(dl, SegmentLabelPos(pendingScreen[0], cursor), FormatDistance(meters));
             }
         }
-        else if (pending.Count == 1)
+        else if (MeasureState.Mode == MeasureMode.Angle && pending.Count == 1)
         {
             // Arm placed, cursor previews the apex: live arm length.
             float2 a = pendingScreen[0];
@@ -301,7 +342,7 @@ internal static class MeasureOverlay
             double meters = (pending[0].ResolveEcl() - preview.ResolveEcl()).Length();
             Label(dl, SegmentLabelPos(cursor, a), FormatDistance(meters));
         }
-        else
+        else if (MeasureState.Mode == MeasureMode.Angle)
         {
             // Arm and apex placed, cursor previews the second arm: live angle plus
             // both arm lengths, like the settled protractor rendering.

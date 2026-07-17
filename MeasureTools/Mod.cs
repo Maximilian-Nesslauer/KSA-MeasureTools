@@ -67,8 +67,9 @@ public sealed class Mod
         }
         catch (Exception ex)
         {
-            // Key on the exception type so a second, different failure mode is not
-            // silenced by the first.
+            // Spam control for this per-frame path: the first exception of each type
+            // logs a full stack via {ex}, then stays quiet. Two different sites that
+            // throw the same type share one log line, which is the accepted tradeoff.
             LogHelper.ErrorOnce("aftergui-" + ex.GetType().Name, $"[MeasureTools] Per-frame draw failed: {ex}");
         }
     }

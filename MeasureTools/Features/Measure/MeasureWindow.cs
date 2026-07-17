@@ -9,7 +9,7 @@ namespace MeasureTools.Features.Measure;
 
 // The tool window: mode selection, snap and plane options, the reference body
 // override and the list of measurements. Extends the stock ImGuiWindow base for
-// Begin/End, the menu bar and pin/focus handling (the DeltaVMap pattern).
+// Begin/End, the menu bar and pin/focus handling.
 internal sealed class MeasureWindow : ImGuiWindow
 {
     private static MeasureWindow? _instance;
@@ -25,16 +25,11 @@ internal sealed class MeasureWindow : ImGuiWindow
     {
         SetWindowTitle("Measure");
         // Default to the upper left, right of the stock Map View panel, so the
-        // window stays clear of the map area where measurements are placed.
-        try
-        {
-            ImGuiViewportPtr mainViewport = ImGui.GetMainViewport();
-            _initialPosition = new float2(mainViewport.Pos.X + 320f, mainViewport.Pos.Y + 80f);
-        }
-        catch
-        {
-            // Outside an ImGui frame; keep the base class default position.
-        }
+        // window stays clear of the map area where measurements are placed. The base
+        // constructor already calls into ImGui, and this only runs from the menu
+        // hook, so an ImGui frame is always active here.
+        ImGuiViewportPtr mainViewport = ImGui.GetMainViewport();
+        _initialPosition = new float2(mainViewport.Pos.X + 320f, mainViewport.Pos.Y + 80f);
     }
 
     // Draw the window if it exists and is shown. Does not create the instance, so
@@ -86,10 +81,10 @@ internal sealed class MeasureWindow : ImGuiWindow
             return;
         }
 
-        if (viewport.Mode != CameraMode.Map)
-            ImGui.TextWrapped("Switch to the map view to place measurements."u8);
+        if (!MeasureState.IsSupportedViewMode(viewport.Mode))
+            ImGui.TextWrapped("Switch to the map or flight view to place measurements."u8);
 
-        // While paused (short right-click in the map), no tool is selected; picking
+        // While paused (short right-click in the view), no tool is selected; picking
         // a tool re-arms measuring.
         bool active = MeasureState.ToolActive;
         if (ImGui.RadioButton("Ruler"u8, active && MeasureState.Mode == MeasureMode.Ruler))
@@ -115,7 +110,7 @@ internal sealed class MeasureWindow : ImGuiWindow
         ImGui.BeginDisabled(!active || MeasureState.Mode == MeasureMode.Surface);
         bool snap = MeasureState.SnapEnabled;
         if (ImGui.Checkbox("Snap to bodies and orbit lines"u8, ref snap))
-            MeasureState.SnapEnabled = snap;
+            MeasureState.SetSnapEnabled(snap);
         DrawReferenceCombo(viewport);
         ImGui.EndDisabled();
 
@@ -135,20 +130,23 @@ internal sealed class MeasureWindow : ImGuiWindow
         if (!ImGui.BeginCombo("Reference"u8, preview))
             return;
         if (ImGui.Selectable("Auto"u8, MeasureState.ReferenceOverride == null))
-            MeasureState.ReferenceOverride = null;
+            MeasureState.SetReferenceOverride(null);
+        // Celestials and stars anchor free points to a fixed body; vehicles are
+        // offered too so a free point can track a craft, which is what the flight
+        // view wants when measuring around the ship you are following.
         foreach (Astronomical astronomical in Universe.CurrentSystem!.All.AsSpan())
         {
-            if (astronomical is not Celestial && astronomical is not StellarBody)
+            if (astronomical is not Celestial && astronomical is not StellarBody && astronomical is not Vehicle)
                 continue;
             if (ImGui.Selectable(astronomical.Id, MeasureState.ReferenceOverride == astronomical))
-                MeasureState.ReferenceOverride = astronomical;
+                MeasureState.SetReferenceOverride(astronomical);
         }
         ImGui.EndCombo();
     }
 
     private void DrawStatus(Viewport viewport)
     {
-        if (viewport.Mode != CameraMode.Map)
+        if (!MeasureState.IsSupportedViewMode(viewport.Mode))
             return;
         if (!MeasureState.ToolActive)
         {
@@ -159,15 +157,15 @@ internal sealed class MeasureWindow : ImGuiWindow
         int have = MeasureState.Pending.Count;
         string status = MeasureState.Mode switch
         {
-            MeasureMode.Ruler => have == 0 ? "Click in the map: place the first point" : "Click in the map: place the second point",
+            MeasureMode.Ruler => have == 0 ? "Click in the view: place the first point" : "Click in the view: place the second point",
             MeasureMode.Surface => have == 0
                 ? "Click on a body: place the first surface point"
                 : "Click the same body: place the second surface point",
             _ => have switch
             {
-                0 => "Click in the map: place the first arm",
-                1 => "Click in the map: place the apex",
-                _ => "Click in the map: place the second arm",
+                0 => "Click in the view: place the first arm",
+                1 => "Click in the view: place the apex",
+                _ => "Click in the view: place the second arm",
             },
         };
         ImGui.Text(status);

@@ -40,13 +40,27 @@ internal static class MeasureState
     // plays normally while the measurements stay visible.
     public static bool ToolActive = true;
 
-    // The tool captures map clicks only while its window is open, the tool is not
-    // paused, and the main viewport is in map mode.
+    // The tool captures clicks only while its window is open, the tool is not
+    // paused, and the main viewport is in a supported view.
     public static bool IsArmed =>
         ToolActive
         && MeasureWindow.IsOpen
         && Universe.CurrentSystem != null
-        && Program.MainViewport.Mode == CameraMode.Map;
+        && IsSupportedViewMode(Program.MainViewport.Mode);
+
+    // The camera modes the tool operates in. Map is the orbital map; Orbit is the
+    // default flight camera that follows the focused body or vehicle. Both navigate
+    // with the middle and right mouse only (MapController.OnMouseButton,
+    // OrbitController.OnMouseButton), so intercepting a left-click placement cannot
+    // break camera control. Free (FlyController) looks around with left-drag, and
+    // IVA and Fixed are special cockpit or static views, so the tool stays disarmed
+    // in those to leave their input untouched. The projection math is identical in
+    // all modes: Camera.EclToEgo is a pure translation, so ego axes are ECL axes and
+    // the base camera projects points the same way the map camera does.
+    public static bool IsSupportedViewMode(CameraMode mode)
+    {
+        return mode == CameraMode.Map || mode == CameraMode.Orbit;
+    }
 
     public static void SetToolActive(bool active)
     {
@@ -72,6 +86,30 @@ internal static class MeasureState
         StateVersion++;
         if (DebugConfig.Measure)
             DefaultCategory.Log.Debug($"[MeasureTools] Mode set to {mode}, pending cleared.");
+    }
+
+    // Snap and the reference body change what MapPicker.Pick returns, so both go
+    // through setters that bump StateVersion, like Mode and ToolActive. Writing the
+    // fields directly would let the overlay's throttled preview cache lag the toggle
+    // by up to the pick interval.
+    public static void SetSnapEnabled(bool enabled)
+    {
+        if (SnapEnabled == enabled)
+            return;
+        SnapEnabled = enabled;
+        StateVersion++;
+        if (DebugConfig.Measure)
+            DefaultCategory.Log.Debug($"[MeasureTools] Snap {(enabled ? "enabled" : "disabled")}.");
+    }
+
+    public static void SetReferenceOverride(Astronomical? body)
+    {
+        if (ReferenceEquals(ReferenceOverride, body))
+            return;
+        ReferenceOverride = body;
+        StateVersion++;
+        if (DebugConfig.Measure)
+            DefaultCategory.Log.Debug($"[MeasureTools] Reference override set to {body?.Id ?? "auto"}.");
     }
 
     public static void AddPoint(Anchor anchor)
@@ -142,6 +180,7 @@ internal static class MeasureState
             if (DebugConfig.Measure)
                 DefaultCategory.Log.Debug($"[MeasureTools] Reference override '{ReferenceOverride.Id}' no longer resolves, back to auto.");
             ReferenceOverride = null;
+            StateVersion++;
         }
         for (int i = 0; i < Pending.Count; i++)
         {
@@ -166,8 +205,13 @@ internal static class MeasureState
     }
 
     // The body whose frame anchors free points and carries the construction plane:
-    // the user override, else the map camera focus (a vehicle defers to its SOI
-    // parent so the plane sits at the body it orbits).
+    // the user override, else the camera focus. A followed vehicle is handled by
+    // view: in the map view it defers to its SOI parent so the plane sits at the body
+    // it orbits (the natural plane for orbital geometry), but in the flight view the
+    // camera sits right on the vehicle, so the vehicle itself is the reference.
+    // Otherwise the construction plane would sit at the parent, often millions of
+    // metres away, and a free point placed near the vehicle would land at that
+    // distance instead of under the cursor.
     public static Astronomical? ResolveReferenceBody(Viewport viewport)
     {
         if (ReferenceOverride != null)
@@ -177,7 +221,8 @@ internal static class MeasureState
         {
             // Vehicle.Orbit is FlightPlan.Patches[0].Orbit and throws on an empty
             // flight plan, so guard before walking to the SOI parent.
-            if (vehicle.FlightPlan.Patches.Count > 0 && vehicle.Orbit.Parent is Astronomical parent)
+            if (viewport.Mode == CameraMode.Map
+                && vehicle.FlightPlan.Patches.Count > 0 && vehicle.Orbit.Parent is Astronomical parent)
                 return parent;
             return vehicle;
         }

@@ -10,9 +10,9 @@ Validated against KSA build version 2026.7.6.4939.
 
 ## Features
 
-- **Ruler** - click two points in the map view to measure the straight-line distance.
-  Snaps to bodies, to body surfaces (the edge of a planet's disc), and to points on
-  orbit lines; clicks on empty space place free points.
+- **Ruler** - click two points to measure the straight-line distance. Snaps to
+  bodies, to body surfaces (the edge of a planet's disc), and to points on orbit
+  lines; clicks on empty space place free points.
 - **Protractor** - click three points (arm, apex, arm) to read the true 3D angle plus
   both arm lengths, e.g. the phase angle between two planets around their star.
 - **Surface** - pin two points to a planet's surface for the great-circle distance,
@@ -25,8 +25,10 @@ Planned: measuring in the vehicle editor, waiting for the upcoming editor rework
 
 ## Usage
 
-In the map view, open **View -> Measure**, pick a tool (Ruler, Protractor, Surface)
-and click in the map to place points.
+In the map view or the default flight view, open **View -> Measure**, pick a tool
+(Ruler, Protractor, Surface) and click in the view to place points. The free-fly and
+IVA cameras steer with the left mouse button, so the tool stays inactive there to
+leave their controls untouched.
 
 | Input | Action |
 | --- | --- |

@@ -1,9 +1,10 @@
 namespace MeasureTools.Core;
 
-// Per-feature debug toggles. In DEBUG builds all flags default to true;
-// set individual flags to false to reduce log noise while debugging a
-// specific feature. In Release builds everything is off and the JIT
-// eliminates dead branches.
+// Per-feature debug toggles. In DEBUG builds all flags default to true; set
+// individual flags to false to reduce log noise while debugging a specific feature.
+// In Release builds everything defaults off. The flags stay mutable (not const) so
+// they can be toggled at runtime, so the guarded branches are still evaluated in
+// Release rather than compiled out.
 internal static class DebugConfig
 {
 #if DEBUG
@@ -14,6 +15,4 @@ internal static class DebugConfig
     public static bool Measure = false;
     public static bool Performance = false;
 #endif
-
-    public static bool Any => Measure || Performance;
 }

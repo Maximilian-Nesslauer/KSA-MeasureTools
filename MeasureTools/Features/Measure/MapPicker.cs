@@ -4,9 +4,11 @@ using MeasureTools.Core;
 
 namespace MeasureTools.Features.Measure;
 
-// Resolves a cursor position in the map view to a measurement anchor: a body under
-// the cursor, a point on a visible orbit line, or a free point on the construction
-// plane. Used both for the placement click and, per frame, for the hover preview.
+// Resolves a cursor position in the active view to a measurement anchor: a body
+// under the cursor, a point on a visible orbit line, or a free point on the
+// construction plane. Used both for the placement click and, per frame, for the
+// hover preview. The map camera and the flight (orbit) camera project points the
+// same way, so the same picking serves both.
 internal static class MapPicker
 {
     // Point-like body snap radius in screen pixels; the stock hover box is similar
@@ -25,9 +27,9 @@ internal static class MapPicker
     // viewport height (0.025 * height matches the 0.05 NDC threshold stock intends).
     private const float OrbitSnapMaxScreenFraction = 0.025f;
 
-    // Plane semantics (Maxi's choice after testing): a plain click that snaps to
-    // nothing lands on the camera-facing plane (always exactly under the cursor);
-    // ctrl+click skips all snapping and lands on the ecliptic plane through the
+    // Plane semantics: a plain click that snaps to nothing lands on the camera-facing
+    // plane (always exactly under the cursor). With eclipticFree (ctrl held) all
+    // snapping is skipped and the point lands on the ecliptic plane through the
     // reference body (or the previous point), the physically meaningful one.
     public static Anchor? Pick(Viewport viewport, float2 mouseViewport, bool eclipticFree = false)
     {
@@ -46,9 +48,6 @@ internal static class MapPicker
         }
         return PickFreePoint(viewport, mouseViewport, eclipticFree);
     }
-
-    // The eclipticFree flag flows through Pick, PickFreePoint and TryGetFreePlane
-    // under this one name: ctrl held, skip snapping, use the ecliptic plane.
 
     // Surface mode: cast the cursor ray against the mean-radius sphere of every
     // celestial (nearest hit wins) and pin the hit as lat/lon in the body-fixed
@@ -221,22 +220,12 @@ internal static class MapPicker
                     PatchedConic patch = patches[i];
                     if (!Astronomical.ShouldDrawLines(patch.PrimaryBody, viewport, patch.Orbit))
                         continue;
-                    if (patch.Orbit.GetNearestPosition(viewport, mouseViewport, patch, out CelestialPosition? pos, lerp: true)
-                        && pos.HasValue && IsOnScreenNearCursor(pos.Value, camera, viewport, mouseViewport)
-                        && pos.Value.IsBetterThan(camera, mouseViewport, best))
-                    {
-                        best = pos;
-                        bestId = vehicle.Id;
-                    }
+                    if (patch.Orbit.GetNearestPosition(viewport, mouseViewport, patch, out CelestialPosition? pos, lerp: true))
+                        TryAccept(pos, vehicle.Id, camera, viewport, mouseViewport, ref best, ref bestId);
                 }
                 CelestialPosition? burnPos = null;
-                if (vehicle.FlightComputer.BurnPlan.GetNearestOrbitPoint(viewport, mouseViewport, ref burnPos)
-                    && burnPos.HasValue && IsOnScreenNearCursor(burnPos.Value, camera, viewport, mouseViewport)
-                    && burnPos.Value.IsBetterThan(camera, mouseViewport, best))
-                {
-                    best = burnPos;
-                    bestId = vehicle.Id;
-                }
+                if (vehicle.FlightComputer.BurnPlan.GetNearestOrbitPoint(viewport, mouseViewport, ref burnPos))
+                    TryAccept(burnPos, vehicle.Id, camera, viewport, mouseViewport, ref best, ref bestId);
             }
             else if (astronomical is Celestial celestial)
             {
@@ -244,13 +233,8 @@ internal static class MapPicker
                     continue;
                 if (!Astronomical.ShouldDrawLines(astronomical, viewport, celestial.Orbit))
                     continue;
-                if (celestial.Orbit.GetNearestPosition(viewport, mouseViewport, null, out CelestialPosition? pos, lerp: true)
-                    && pos.HasValue && IsOnScreenNearCursor(pos.Value, camera, viewport, mouseViewport)
-                    && pos.Value.IsBetterThan(camera, mouseViewport, best))
-                {
-                    best = pos;
-                    bestId = celestial.Id;
-                }
+                if (celestial.Orbit.GetNearestPosition(viewport, mouseViewport, null, out CelestialPosition? pos, lerp: true))
+                    TryAccept(pos, celestial.Id, camera, viewport, mouseViewport, ref best, ref bestId);
             }
         }
 
@@ -258,6 +242,20 @@ internal static class MapPicker
             return null;
         CelestialPosition cp = best.Value;
         return Anchor.OnOrbit(cp.Parent, cp.Point.PositionCce, bestId);
+    }
+
+    // Keep the candidate if it is on screen near the cursor and closer than the best
+    // so far. Shared by the three orbit-candidate sources (flight-plan patches, the
+    // burn plan, celestial orbits), all of which produce a nullable CelestialPosition.
+    private static void TryAccept(CelestialPosition? candidate, string id, Camera camera, Viewport viewport, float2 mouseViewport, ref CelestialPosition? best, ref string bestId)
+    {
+        if (candidate.HasValue
+            && IsOnScreenNearCursor(candidate.Value, camera, viewport, mouseViewport)
+            && candidate.Value.IsBetterThan(camera, mouseViewport, best))
+        {
+            best = candidate;
+            bestId = id;
+        }
     }
 
     // Re-validate an orbit-point candidate on screen. Stock GetNearestPoint has a

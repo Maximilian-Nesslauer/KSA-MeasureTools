@@ -27,22 +27,24 @@ internal enum AnchorKind
 // A measurement endpoint, anchored in a body's frame rather than frozen in ECL.
 internal sealed class Anchor
 {
-    public AnchorKind Kind;
+    // Built only through the factory methods below and never mutated afterward, so
+    // every field is init-only.
+    public AnchorKind Kind { get; init; }
 
     // BodyCenter: the snapped body. FreePoint: the reference body whose CCE frame
     // holds OffsetCce. Null for OrbitPoint, which uses OrbitParent instead.
-    public Astronomical? Body;
+    public Astronomical? Body { get; init; }
 
     // OrbitPoint: the parent body of the picked orbit.
-    public IParentBody? OrbitParent;
+    public IParentBody? OrbitParent { get; init; }
 
-    public double3 OffsetCce;
+    public double3 OffsetCce { get; init; }
 
     // SurfacePin only, in degrees, body-fixed frame.
-    public double Latitude;
-    public double Longitude;
+    public double Latitude { get; init; }
+    public double Longitude { get; init; }
 
-    public string Label = "";
+    public string Label { get; init; } = "";
 
     public double3 ResolveEcl()
     {

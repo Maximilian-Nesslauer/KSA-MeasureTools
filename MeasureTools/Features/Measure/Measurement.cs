@@ -9,9 +9,10 @@ namespace MeasureTools.Features.Measure;
 // anchored bodies move.
 internal sealed class Measurement
 {
-    public MeasureMode Mode;
+    // Built once in MeasureState.AddPoint and never mutated afterward.
+    public MeasureMode Mode { get; init; }
 
-    public Anchor[] Anchors = Array.Empty<Anchor>();
+    public Anchor[] Anchors { get; init; } = Array.Empty<Anchor>();
 
     public bool IsValid(CelestialSystem system)
     {

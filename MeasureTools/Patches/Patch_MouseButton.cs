@@ -10,17 +10,24 @@ using MeasureTools.Features.Measure;
 
 namespace MeasureTools.Patches;
 
-// Intercepts the left mouse press while the measure tool is armed in map mode, so a
-// placement click does not also focus a body, change the target or create a burn
-// (Program.OnMouseButton dispatches those after the controllers). Camera navigation
-// is untouched: the map camera pans/rotates with middle/right drag only
-// (MapController.OnMouseButton), and modified clicks pass through so shift-click
-// target setting keeps working. A short right click (press and release without
-// movement) cancels the in-progress placement, or pauses the tool when nothing is
-// pending; a real right drag still rotates.
+// Intercepts the left mouse press while the measure tool is armed in a supported
+// view (map or flight), so a placement click does not also focus a body, change the
+// target or create a burn (Program.OnMouseButton dispatches those after the
+// controllers). Camera navigation is untouched: both supported views pan/rotate with
+// middle/right drag only (MapController.OnMouseButton, OrbitController.OnMouseButton)
+// and leave the left button free, which is why the tool stays disarmed in the Free
+// and IVA views that steer with left-drag (see MeasureState.IsSupportedViewMode).
+// Modified clicks pass through so shift-click target setting keeps working. A short
+// right click (press and release without movement) cancels the in-progress
+// placement, or pauses the tool when nothing is pending; a real right drag still
+// rotates.
 [HarmonyPatch(typeof(Program), nameof(Program.OnMouseButton))]
 internal static class Patch_MouseButton
 {
+    // A right press and release closer than this counts as a click (cancel/pause);
+    // anything farther is a drag (camera rotate) and is left to the game.
+    private const float RightClickDragThresholdPx = 4f;
+
     private static bool _rightPressPending;
     private static float2 _rightPressPos;
 
@@ -61,7 +68,7 @@ internal static class Patch_MouseButton
                 else if (action == GlfwButtonAction.Release && _rightPressPending)
                 {
                     _rightPressPending = false;
-                    if (float2.Distance(ImGui.GetIO().MousePos, _rightPressPos) < 4f)
+                    if (float2.Distance(ImGui.GetIO().MousePos, _rightPressPos) < RightClickDragThresholdPx)
                     {
                         // Short right-click: cancel the in-progress placement, or
                         // pause the tool when nothing is pending so the game plays
@@ -97,7 +104,7 @@ internal static class Patch_MouseButton
                     $"[MeasureTools] Placement click at {mouseViewport} resolved no anchor (mode {MeasureState.Mode}), click consumed.");
             }
             // Consume the click even when nothing resolved (plane edge-on): while the
-            // tool is armed, unmodified left clicks in the map belong to it.
+            // tool is armed, unmodified left clicks in a supported view belong to it.
             return false;
         }
         catch (Exception ex)
