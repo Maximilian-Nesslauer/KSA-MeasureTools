@@ -40,6 +40,11 @@
       <HintPath>..\..\..\refs\game\BepuUtilities.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- ImInputString / ImGui.InputText surface the Ptr type from here. -->
+    <Reference Include="Brutal.Core.Common">
+      <HintPath>..\..\..\refs\game\Brutal.Core.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <!-- Add more game DLL references as needed:
     <Reference Include="Brutal.Core.Strings">
       <HintPath>..\..\..\refs\game\Brutal.Core.Strings.dll</HintPath>

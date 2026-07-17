@@ -5,59 +5,202 @@ using MeasureTools.Core;
 
 namespace MeasureTools.Features.Measure;
 
-// The overlay color scheme, user-configurable through the window's Colors
-// section so measurements stay readable against future vehicle paint jobs.
-// Persisted as colors.cfg next to the mod assembly: one "Name=r,g,b,a" line per
-// color, written on window close and unload, loaded at mod load. Main thread
-// only (draw hook and window).
+// A named snapshot of the overlay color scheme; the user switches between
+// palettes to keep measurements readable against differently colored vehicles.
+internal sealed class ColorPalette
+{
+    public string Name = "Palette";
+    public byte4 Measure;
+    public byte4 Highlight;
+    public byte4 Pending;
+    public byte4 FeatureDot;
+    public byte4 Plane;
+    public byte4 LabelText;
+    public byte4 LabelPlate;
+
+    public ColorPalette Clone(string name)
+    {
+        return new ColorPalette
+        {
+            Name = name,
+            Measure = Measure,
+            Highlight = Highlight,
+            Pending = Pending,
+            FeatureDot = FeatureDot,
+            Plane = Plane,
+            LabelText = LabelText,
+            LabelPlate = LabelPlate,
+        };
+    }
+}
+
+// The palette collection and the active selection the overlay draws with.
+// Persisted as colors.cfg next to the mod assembly: an "active=index" line,
+// then one [Name] section with Name=r,g,b,a lines per palette. Written on
+// window close and unload, loaded at mod load; a pre-palette flat file (color
+// lines without any section) migrates into a "Custom" palette ahead of the
+// shipped ones. Main thread only (draw hook and window).
 internal static class MeasureColors
 {
     private const string FileName = "colors.cfg";
 
-    // Declared BEFORE the mutable fields below: static initializers run in
-    // textual order, so the defaults must already exist when the fields copy
-    // them (the other way around every color starts as transparent black).
-    // Warm red for lines and markers, yellow for the pending/preview family.
-    private static readonly byte4 DefaultMeasure = new byte4(235, 100, 90, 235);
-    private static readonly byte4 DefaultHighlight = new byte4(255, 180, 170, 255);
-    private static readonly byte4 DefaultPending = new byte4(255, 220, 110, 245);
-    private static readonly byte4 DefaultFeatureDot = new byte4(235, 100, 90, 200);
-    private static readonly byte4 DefaultPlane = new byte4(150, 170, 200, 70);
-    private static readonly byte4 DefaultLabelText = new byte4(236, 234, 222, 255);
-    private static readonly byte4 DefaultLabelPlate = new byte4(8, 12, 16, 175);
+    public static readonly List<ColorPalette> Palettes = new();
 
-    public static byte4 Measure = DefaultMeasure;
-    public static byte4 Highlight = DefaultHighlight;
-    public static byte4 Pending = DefaultPending;
-    public static byte4 FeatureDot = DefaultFeatureDot;
-    public static byte4 Plane = DefaultPlane;
-    public static byte4 LabelText = DefaultLabelText;
-    public static byte4 LabelPlate = DefaultLabelPlate;
-
-    // The preview variants keep the pending hue at reduced alpha, so one picker
-    // governs the whole pending/preview family.
-    public static byte4 Preview => WithAlpha(Pending, 160);
-    public static byte4 PreviewFaint => WithAlpha(Pending, 80);
-
+    private static int _activeIndex;
     private static bool _dirty;
+
+    public static int ActiveIndex => _activeIndex;
+
+    public static ColorPalette Active => Palettes[_activeIndex];
+
+    // The draw code reads the scheme through these, unaware of palettes. The
+    // preview variants keep the pending hue at reduced alpha, so one picker
+    // governs the whole pending/preview family.
+    public static byte4 Measure => Active.Measure;
+    public static byte4 Highlight => Active.Highlight;
+    public static byte4 Pending => Active.Pending;
+    public static byte4 FeatureDot => Active.FeatureDot;
+    public static byte4 Plane => Active.Plane;
+    public static byte4 LabelText => Active.LabelText;
+    public static byte4 LabelPlate => Active.LabelPlate;
+    public static byte4 Preview => WithAlpha(Active.Pending, 160);
+    public static byte4 PreviewFaint => WithAlpha(Active.Pending, 80);
+
+    static MeasureColors()
+    {
+        RestoreDefaultPalettes();
+    }
+
+    // The four shipped palettes: warm red for green or neutral craft, the green
+    // scheme for red craft, blue for warm paint jobs, white-on-orange for busy
+    // or dark scenes. All of them stay user-editable like any custom palette.
+    private static ColorPalette[] CreateDefaultPalettes()
+    {
+        var shared = new
+        {
+            Pending = new byte4(255, 220, 110, 245),
+            Plane = new byte4(150, 170, 200, 70),
+            LabelText = new byte4(236, 234, 222, 255),
+            LabelPlate = new byte4(8, 12, 16, 175),
+        };
+        return new[]
+        {
+            new ColorPalette
+            {
+                Name = "Red",
+                Measure = new byte4(235, 100, 90, 235),
+                Highlight = new byte4(255, 180, 170, 255),
+                FeatureDot = new byte4(235, 100, 90, 200),
+                Pending = shared.Pending,
+                Plane = shared.Plane,
+                LabelText = shared.LabelText,
+                LabelPlate = shared.LabelPlate,
+            },
+            new ColorPalette
+            {
+                Name = "Green",
+                Measure = new byte4(120, 220, 160, 235),
+                Highlight = new byte4(215, 255, 235, 255),
+                FeatureDot = new byte4(120, 220, 160, 200),
+                Pending = shared.Pending,
+                Plane = shared.Plane,
+                LabelText = shared.LabelText,
+                LabelPlate = shared.LabelPlate,
+            },
+            new ColorPalette
+            {
+                Name = "Blue",
+                Measure = new byte4(90, 170, 255, 235),
+                Highlight = new byte4(180, 220, 255, 255),
+                FeatureDot = new byte4(90, 170, 255, 200),
+                Pending = shared.Pending,
+                Plane = shared.Plane,
+                LabelText = shared.LabelText,
+                LabelPlate = shared.LabelPlate,
+            },
+            new ColorPalette
+            {
+                Name = "Contrast",
+                Measure = new byte4(240, 240, 240, 235),
+                Highlight = new byte4(255, 255, 255, 255),
+                FeatureDot = new byte4(240, 240, 240, 200),
+                Pending = new byte4(255, 150, 60, 245),
+                Plane = shared.Plane,
+                LabelText = shared.LabelText,
+                LabelPlate = new byte4(0, 0, 0, 200),
+            },
+        };
+    }
 
     public static void MarkDirty()
     {
         _dirty = true;
     }
 
-    // Restores defaults without touching the dirty flag: the unload path resets
-    // after saving, while the window's reset button marks dirty itself so the
-    // restored defaults get persisted.
+    public static void SetActive(int index)
+    {
+        if (index < 0 || index >= Palettes.Count || index == _activeIndex)
+            return;
+        _activeIndex = index;
+        _dirty = true;
+        if (DebugConfig.Measure)
+            DefaultCategory.Log.Debug($"[MeasureTools] Palette switched to '{Active.Name}'.");
+    }
+
+    // The New button: clone the active palette under a fresh name and select it.
+    public static void AddPalette()
+    {
+        int n = Palettes.Count + 1;
+        string name;
+        do
+        {
+            name = "Palette " + n;
+            n++;
+        } while (Palettes.Exists(p => p.Name == name));
+        Palettes.Add(Active.Clone(name));
+        _activeIndex = Palettes.Count - 1;
+        _dirty = true;
+    }
+
+    // The Delete button; the last remaining palette stays (the overlay always
+    // needs an active scheme).
+    public static void DeleteActive()
+    {
+        if (Palettes.Count <= 1)
+            return;
+        if (DebugConfig.Measure)
+            DefaultCategory.Log.Debug($"[MeasureTools] Palette '{Active.Name}' deleted.");
+        Palettes.RemoveAt(_activeIndex);
+        if (_activeIndex >= Palettes.Count)
+            _activeIndex = Palettes.Count - 1;
+        _dirty = true;
+    }
+
+    // Re-adds the shipped palettes and restores their colors, matched by name;
+    // custom palettes are untouched. Also the initial population, hence the
+    // static constructor call.
+    public static void RestoreDefaultPalettes()
+    {
+        foreach (ColorPalette shipped in CreateDefaultPalettes())
+        {
+            int existing = Palettes.FindIndex(p => p.Name == shipped.Name);
+            if (existing >= 0)
+                Palettes[existing] = shipped;
+            else
+                Palettes.Add(shipped);
+        }
+        _dirty = true;
+    }
+
+    // Drops all custom palettes and the selection, back to the shipped set;
+    // used on unload after saving so a reload starts clean. Clears the dirty
+    // flag, since this state is not meant to be persisted.
     public static void Reset()
     {
-        Measure = DefaultMeasure;
-        Highlight = DefaultHighlight;
-        Pending = DefaultPending;
-        FeatureDot = DefaultFeatureDot;
-        Plane = DefaultPlane;
-        LabelText = DefaultLabelText;
-        LabelPlate = DefaultLabelPlate;
+        Palettes.Clear();
+        _activeIndex = 0;
+        RestoreDefaultPalettes();
+        _dirty = false;
     }
 
     private static byte4 WithAlpha(byte4 color, byte alpha)
@@ -92,30 +235,78 @@ internal static class MeasureColors
         {
             if (!File.Exists(path))
                 return;
-            foreach (string line in File.ReadAllLines(path))
+            var loaded = new List<ColorPalette>();
+            ColorPalette? current = null;
+            ColorPalette? flat = null;
+            int active = 0;
+            foreach (string rawLine in File.ReadAllLines(path))
             {
-                int separator = line.IndexOf('=');
-                if (separator <= 0 || !TryParseColor(line[(separator + 1)..], out byte4 color))
+                string line = rawLine.Trim();
+                if (line.Length == 0)
                     continue;
-                switch (line[..separator].Trim())
+                if (line.StartsWith('[') && line.EndsWith(']'))
                 {
-                    case nameof(Measure): Measure = color; break;
-                    case nameof(Highlight): Highlight = color; break;
-                    case nameof(Pending): Pending = color; break;
-                    case nameof(FeatureDot): FeatureDot = color; break;
-                    case nameof(Plane): Plane = color; break;
-                    case nameof(LabelText): LabelText = color; break;
-                    case nameof(LabelPlate): LabelPlate = color; break;
+                    string name = line[1..^1].Trim();
+                    current = new ColorPalette { Name = name.Length > 0 ? name : "Palette" };
+                    loaded.Add(current);
+                    continue;
+                }
+                int separator = line.IndexOf('=');
+                if (separator <= 0)
+                    continue;
+                string key = line[..separator].Trim();
+                string value = line[(separator + 1)..];
+                if (key == "active")
+                {
+                    int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out active);
+                    continue;
+                }
+                if (!TryParseColor(value, out byte4 color))
+                    continue;
+                // Color lines before any [section] come from the pre-palette
+                // flat format and migrate into a "Custom" palette.
+                ColorPalette target = current ?? (flat ??= new ColorPalette { Name = "Custom" });
+                switch (key)
+                {
+                    case nameof(ColorPalette.Measure): target.Measure = color; break;
+                    case nameof(ColorPalette.Highlight): target.Highlight = color; break;
+                    case nameof(ColorPalette.Pending): target.Pending = color; break;
+                    case nameof(ColorPalette.FeatureDot): target.FeatureDot = color; break;
+                    case nameof(ColorPalette.Plane): target.Plane = color; break;
+                    case nameof(ColorPalette.LabelText): target.LabelText = color; break;
+                    case nameof(ColorPalette.LabelPlate): target.LabelPlate = color; break;
                 }
             }
+            if (flat != null)
+                loaded.Insert(0, flat);
+            if (loaded.Count == 0)
+                return;
+            Palettes.Clear();
+            Palettes.AddRange(loaded);
+            if (flat != null)
+            {
+                // Migration keeps the user's tweaked colors active and adds the
+                // shipped palettes alongside.
+                RestoreDefaultPalettes();
+                _dirty = true;
+                active = 0;
+            }
+            else
+            {
+                // A clean load matches the file; without this the dirty flag
+                // from the static constructor forces a pointless rewrite on the
+                // first close of every session.
+                _dirty = false;
+            }
+            _activeIndex = Math.Clamp(active, 0, Palettes.Count - 1);
             if (DebugConfig.Measure)
-                DefaultCategory.Log.Debug($"[MeasureTools] Colors loaded from {path}.");
+                DefaultCategory.Log.Debug($"[MeasureTools] {Palettes.Count} palette(s) loaded from {path}, active '{Active.Name}'.");
         }
         catch (Exception ex)
         {
-            // File IO can legitimately fail (permissions, sync tools); defaults
-            // keep the mod fully usable.
-            LogHelper.WarnOnce("colors-load", $"[MeasureTools] Could not load {path}, using default colors: {ex.Message}");
+            // File IO can legitimately fail (permissions, sync tools); the
+            // shipped palettes keep the mod fully usable.
+            LogHelper.WarnOnce("colors-load", $"[MeasureTools] Could not load {path}, using default palettes: {ex.Message}");
         }
     }
 
@@ -126,19 +317,25 @@ internal static class MeasureColors
         string path = ConfigPath();
         try
         {
-            File.WriteAllLines(path, new[]
+            var lines = new List<string>(1 + Palettes.Count * 8)
             {
-                Format(nameof(Measure), Measure),
-                Format(nameof(Highlight), Highlight),
-                Format(nameof(Pending), Pending),
-                Format(nameof(FeatureDot), FeatureDot),
-                Format(nameof(Plane), Plane),
-                Format(nameof(LabelText), LabelText),
-                Format(nameof(LabelPlate), LabelPlate),
-            });
+                "active=" + _activeIndex.ToString(CultureInfo.InvariantCulture),
+            };
+            foreach (ColorPalette palette in Palettes)
+            {
+                lines.Add("[" + palette.Name + "]");
+                lines.Add(Format(nameof(ColorPalette.Measure), palette.Measure));
+                lines.Add(Format(nameof(ColorPalette.Highlight), palette.Highlight));
+                lines.Add(Format(nameof(ColorPalette.Pending), palette.Pending));
+                lines.Add(Format(nameof(ColorPalette.FeatureDot), palette.FeatureDot));
+                lines.Add(Format(nameof(ColorPalette.Plane), palette.Plane));
+                lines.Add(Format(nameof(ColorPalette.LabelText), palette.LabelText));
+                lines.Add(Format(nameof(ColorPalette.LabelPlate), palette.LabelPlate));
+            }
+            File.WriteAllLines(path, lines);
             _dirty = false;
             if (DebugConfig.Measure)
-                DefaultCategory.Log.Debug($"[MeasureTools] Colors saved to {path}.");
+                DefaultCategory.Log.Debug($"[MeasureTools] {Palettes.Count} palette(s) saved to {path}.");
         }
         catch (Exception ex)
         {

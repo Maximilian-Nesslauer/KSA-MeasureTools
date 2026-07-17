@@ -90,6 +90,24 @@ internal sealed class MeasureWindow : ImGuiWindow
         _autoPreviewText = "Auto (none)";
     }
 
+    // Quick palette switching from the menu bar, without opening the Colors
+    // section.
+    public override void DrawMenuBar()
+    {
+        base.DrawMenuBar();
+        if (ImGui.BeginMenu("Palette"u8))
+        {
+            for (int i = 0; i < MeasureColors.Palettes.Count; i++)
+            {
+                ImGui.PushID(i);
+                if (ImGui.MenuItem(MeasureColors.Palettes[i].Name, default(ImString), i == MeasureColors.ActiveIndex))
+                    MeasureColors.SetActive(i);
+                ImGui.PopID();
+            }
+            ImGui.EndMenu();
+        }
+    }
+
     public override void DrawContent(Viewport viewport)
     {
         if (Universe.CurrentSystem == null)
@@ -234,25 +252,80 @@ internal sealed class MeasureWindow : ImGuiWindow
         ImGui.EndDisabled();
     }
 
-    private static void DrawColorsSection()
+    // The rename field mirrors the active palette; rebuilt whenever a different
+    // palette OBJECT becomes active (an index compare would miss deleting a
+    // non-last palette or restoring a default, both of which swap the object at
+    // the same index).
+    private ImInputString? _paletteNameInput;
+    private ColorPalette? _paletteNameFor;
+
+    private void DrawColorsSection()
     {
+        ImGui.Text("Palette"u8);
+        ImGui.SameLine();
+        // Leave room for the two small buttons behind the combo.
+        float buttonsWidth = ImGui.CalcTextSize("New").X + ImGui.CalcTextSize("Delete").X
+            + ImGui.GetStyle().ItemSpacing.X * 2f + 20f;
+        ImGui.SetNextItemWidth(-buttonsWidth);
+        if (ImGui.BeginCombo("##palette"u8, MeasureColors.Active.Name))
+        {
+            for (int i = 0; i < MeasureColors.Palettes.Count; i++)
+            {
+                ImGui.PushID(i);
+                if (ImGui.Selectable(MeasureColors.Palettes[i].Name, i == MeasureColors.ActiveIndex))
+                    MeasureColors.SetActive(i);
+                ImGui.PopID();
+            }
+            ImGui.EndCombo();
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("New"u8))
+            MeasureColors.AddPalette();
+        ImGui.SameLine();
+        ImGui.BeginDisabled(MeasureColors.Palettes.Count <= 1);
+        if (ImGui.SmallButton("Delete"u8))
+            MeasureColors.DeleteActive();
+        ImGui.EndDisabled();
+
+        ColorPalette active = MeasureColors.Active;
+        if (!ReferenceEquals(_paletteNameFor, active) || _paletteNameInput == null)
+        {
+            _paletteNameFor = active;
+            // Capacity must exceed the content bytes (ImInputString throws
+            // otherwise); loaded cfg names can be longer than the UI would type.
+            int capacity = Math.Max(64, System.Text.Encoding.UTF8.GetByteCount(active.Name) + 1);
+            _paletteNameInput = new ImInputString(capacity, active.Name);
+        }
+        ImGui.Text("Name"u8);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(-1f);
+        if (ImGui.InputText("##palettename"u8, _paletteNameInput))
+        {
+            // Brackets and equals would corrupt the cfg format.
+            string name = _paletteNameInput.ToString().Replace("[", "").Replace("]", "").Replace("=", "").Trim();
+            if (name.Length > 0 && name != active.Name)
+            {
+                active.Name = name;
+                MeasureColors.MarkDirty();
+            }
+        }
+
         // The preview shades derive from Pending by alpha, so one row covers the
         // whole pending/preview family.
         bool changed = false;
-        changed |= DrawColorRow("Lines"u8, ref MeasureColors.Measure);
-        changed |= DrawColorRow("Line highlight"u8, ref MeasureColors.Highlight);
-        changed |= DrawColorRow("Pending and preview"u8, ref MeasureColors.Pending);
-        changed |= DrawColorRow("Snap markers"u8, ref MeasureColors.FeatureDot);
-        changed |= DrawColorRow("Construction plane"u8, ref MeasureColors.Plane);
-        changed |= DrawColorRow("Label text"u8, ref MeasureColors.LabelText);
-        changed |= DrawColorRow("Label background"u8, ref MeasureColors.LabelPlate);
+        changed |= DrawColorRow("Lines"u8, ref active.Measure);
+        changed |= DrawColorRow("Line highlight"u8, ref active.Highlight);
+        changed |= DrawColorRow("Pending and preview"u8, ref active.Pending);
+        changed |= DrawColorRow("Snap markers"u8, ref active.FeatureDot);
+        changed |= DrawColorRow("Construction plane"u8, ref active.Plane);
+        changed |= DrawColorRow("Label text"u8, ref active.LabelText);
+        changed |= DrawColorRow("Label background"u8, ref active.LabelPlate);
         if (changed)
             MeasureColors.MarkDirty();
-        if (ImGui.SmallButton("Reset colors"u8))
-        {
-            MeasureColors.Reset();
-            MeasureColors.MarkDirty();
-        }
+        if (ImGui.SmallButton("Restore default palettes"u8))
+            MeasureColors.RestoreDefaultPalettes();
+        if (ImGui.IsItemHovered())
+            ImGuiHelper.DrawTooltip("Re-adds the four shipped palettes and restores their colors.\nCustom palettes are kept."u8);
     }
 
     private static bool DrawColorRow(ImString label, ref byte4 color)
