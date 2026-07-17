@@ -19,6 +19,10 @@ internal static class MeasureOverlay
     private static readonly byte4 PreviewColor = new byte4(255, 220, 110, 160);
     private static readonly byte4 PreviewFaint = new byte4(255, 220, 110, 80);
     private static readonly byte4 PlaneColor = new byte4(150, 170, 200, 70);
+    // Snappable-feature markers on the hovered part: green like settled
+    // measurements so they stand apart from the yellow pending/preview set, and
+    // opaque enough to read against a lit hull.
+    private static readonly byte4 FeatureDotColor = new byte4(120, 220, 160, 200);
     private static readonly byte4 LabelColor = new byte4(236, 234, 222, 255);
     private static readonly byte4 LabelPlate = new byte4(8, 12, 16, 175);
 
@@ -383,15 +387,70 @@ internal static class MeasureOverlay
                 dl.AddCircle(in cursor, 8f, PreviewColor, 20, 1.5f);
                 Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f), preview.Label);
                 break;
+            case AnchorKind.PartPoint:
+            case AnchorKind.EditorPartPoint:
+                DrawPartFeatureDots(dl, camera, vpPos, preview);
+                dl.AddCircleFilled(in cursor, 3.5f, PreviewColor);
+                // Four segments render as a diamond, distinct from the body circle
+                // and the orbit-point ring.
+                dl.AddCircle(in cursor, 9f, PreviewColor, 4, 1.5f);
+                Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f), preview.Label);
+                break;
             default:
                 Cross(dl, cursor, 7f, PreviewColor);
                 DrawConstructionPlane(dl, camera, viewport, vpPos, cursor, eclipticPlane);
                 // Spell out which plane the point will land on, so an unexpected
                 // plane mode or reference body is visible before the click.
                 string plane = eclipticPlane ? "ecliptic plane" : "camera plane";
-                Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f),
-                    plane + " @ " + (preview.Body?.Id ?? "?"));
+                string reference = preview.Kind == AnchorKind.EditorFreePoint
+                    ? "editor"
+                    : preview.Body?.Id ?? "?";
+                Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f), plane + " @ " + reference);
                 break;
+        }
+    }
+
+    // Faint dots on the hovered part's attach nodes and bounding-box center while
+    // a part pick is previewed, so the snappable features are visible before the
+    // click (the editor shows its connector points the same way during a grab).
+    // Skipped when the feature tier is disabled, so the dots never suggest a snap
+    // that will not happen.
+    private static void DrawPartFeatureDots(ImDrawListPtr dl, Camera camera, float2 vpPos, Anchor preview)
+    {
+        if (!MeasureState.PartFeatureSnapEnabled)
+            return;
+        if (preview.Part == null)
+            return;
+        double4x4 matrixVehicleAsmb2Ego;
+        if (preview.Kind == AnchorKind.EditorPartPoint)
+        {
+            VehicleEditor? editor = Program.Editor;
+            if (editor == null)
+                return;
+            matrixVehicleAsmb2Ego = editor.EditingSpace.GetMatrixAsmb2Ego(camera);
+        }
+        else if (preview.Body is Vehicle vehicle)
+        {
+            matrixVehicleAsmb2Ego = vehicle.GetMatrixAsmb2Ego(camera);
+        }
+        else
+        {
+            return;
+        }
+        Part fullPart = preview.Part.FullPart;
+        (double3 min, double3 max) = fullPart.BoundingBoxPartAsmb;
+        if (min.X <= max.X)
+        {
+            double3 centerEgo = ((min + max) * 0.5).Transform(fullPart.MatrixAsmb2Ego(in matrixVehicleAsmb2Ego));
+            float2 s = vpPos + camera.EgoToScreen(centerEgo);
+            if (Valid(s))
+                dl.AddCircleFilled(in s, 4f, FeatureDotColor);
+        }
+        for (int i = 0; i < fullPart.Connectors.Count; i++)
+        {
+            float2 s = vpPos + camera.EgoToScreen(fullPart.Connectors[i].PositionEgo(in matrixVehicleAsmb2Ego));
+            if (Valid(s))
+                dl.AddCircle(in s, 6f, FeatureDotColor, 12, 1.5f);
         }
     }
 

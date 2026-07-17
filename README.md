@@ -15,27 +15,49 @@ Validated against KSA build version 2026.7.6.4939.
   lines; clicks on empty space place free points.
 - **Protractor** - click three points (arm, apex, arm) to read the true 3D angle plus
   both arm lengths, e.g. the phase angle between two planets around their star.
+- **Part-level measuring** - when the camera is close to a vehicle, points snap to
+  individual parts with centimeter precision: attach nodes and part centers first,
+  then mesh vertices (tank rims, panel corners), and everywhere else the exact hull
+  point under the cursor. Anchors stick to their part, so measurements stay correct
+  while the vehicle moves and rotates - including between parts of two vehicles
+  flying side by side. Engine nozzles measure at their neutral position (gimbal
+  deflection is visual only); a part anchor disappears when its part is decoupled
+  or destroyed.
 - **Surface** - pin two points to a planet's surface for the great-circle distance,
   chord, and initial bearing; pins track the body's rotation like ground markers.
+- **Editor measuring** - the ruler and protractor also work inside the vehicle
+  editor, with the same part-level snapping (attach nodes, part centers, mesh
+  vertices, hull points) over the craft being built, including parts currently
+  held in the hand. Open it from the new top-level **Measure** menu in the editor
+  menu bar. Anchors follow parts as they are dragged, so a measurement updates
+  live while building; points on a part disappear when the part is deleted, and
+  all editor measurements clear when the editor closes.
 - **Live preview** with snap highlighting, hover-sync between the list and the map,
   and click-to-copy values.
 
-Planned: measuring in the vehicle editor, waiting for the upcoming editor rework
+Measuring in the editor will be revisited further when the announced editor rework ships
 ([#1](https://github.com/Maximilian-Nesslauer/KSA-MeasureTools/issues/1)).
 
 ## Usage
 
-In the map view or the default flight view, open **View -> Measure**, pick a tool
-(Ruler, Protractor, Surface) and click in the view to place points. The free-fly and
+In the map view or the default flight view, open **View -> Measure**; in the vehicle
+editor, open **Measure -> Show Window** from the menu bar. Pick a tool (Ruler,
+Protractor, Surface) and click in the view to place points. The free-fly and
 IVA cameras steer with the left mouse button, so the tool stays inactive there to
-leave their controls untouched.
+leave their controls untouched. While the tool is armed it owns left clicks, so
+editor part placement is suspended; pause the tool (short right-click) or close
+the window to build normally.
 
 | Input | Action |
 | --- | --- |
-| Left-click | Place a point (snaps to bodies, disc edges, and orbit lines) |
+| Left-click | Place a point (snaps to parts, bodies, disc edges, and orbit lines) |
 | Ctrl + left-click | Place a free point on the ecliptic plane through the reference body |
-| Short right-click | Cancel the current point, or pause measuring when nothing is pending |
+| Short right-click | Cancel the current point, or pause measuring when nothing is pending (over a part, the stock part menu opens instead of pausing) |
 | Click a list row | Copy the measurement to the clipboard |
+
+Part snapping can be tuned in the window: "Snap to parts" turns part picking off
+entirely (vehicles then snap at their center marker as before), and the two
+sub-toggles control the attach-node/part-center and mesh-vertex snap tiers.
 
 Free clicks that snap to nothing land on the camera-facing plane. While measuring is
 paused, no tool is selected and all clicks pass through to the game; pick a tool to

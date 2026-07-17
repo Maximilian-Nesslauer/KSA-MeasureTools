@@ -31,11 +31,20 @@ internal static class Patch_MouseButton
     private static bool _rightPressPending;
     private static float2 _rightPressPos;
 
+    // Set when a left press was consumed for a placement, so its release gets
+    // consumed too. The editor grabs/places the highlighted part on the left
+    // RELEASE (VehicleEditor.OnMouseButton), so eating only the press would place
+    // a measure point AND hand the part to the cursor. Pairing keeps releases
+    // whose press the tool did not take (started before arming, or over UI)
+    // untouched.
+    private static bool _leftPressConsumed;
+
     // Called from [StarMapUnload] so no click state survives a mod reload.
     public static void Reset()
     {
         _rightPressPending = false;
         _rightPressPos = default;
+        _leftPressConsumed = false;
     }
 
     [HarmonyPrefix]
@@ -45,18 +54,28 @@ internal static class Patch_MouseButton
         {
             if (!MeasureState.IsArmed)
             {
-                // Drop any half-tracked right click so its state cannot leak across
-                // a disarm/re-arm cycle and cancel a point unexpectedly.
+                // Drop any half-tracked click so its state cannot leak across a
+                // disarm/re-arm cycle and cancel a point or eat a release
+                // unexpectedly.
                 _rightPressPending = false;
+                _leftPressConsumed = false;
                 return true;
             }
             // Mirror the original's own early-out: when the UI owns the mouse over the
             // main viewport the original ignores the click anyway, and a click on our
-            // tool window must not place a point.
+            // tool window must not place a point. Both early-outs drop the left-press
+            // pairing so a release that lands here cannot leave the flag armed for a
+            // later, unrelated release.
             if (ImGui.GetIO().WantCaptureMouse && Program.HoveredViewport == Program.MainViewport)
+            {
+                _leftPressConsumed = false;
                 return true;
+            }
             if (Program.HoveredViewport != Program.MainViewport)
+            {
+                _leftPressConsumed = false;
                 return true;
+            }
 
             if (button == GlfwMouseButton.Number2)
             {
@@ -74,15 +93,44 @@ internal static class Patch_MouseButton
                         // pause the tool when nothing is pending so the game plays
                         // normally with the window still open.
                         if (MeasureState.Pending.Count > 0)
+                        {
                             MeasureState.CancelPending();
-                        else
+                            // Consume the release so canceling does not also open
+                            // the stock part context menu (Vehicle.OnMouseButton
+                            // opens it for the hovered part on a short right
+                            // release). Stock cancels the controller's pending
+                            // drag the same way before consuming the release.
+                            Program.HoveredViewport.GetActiveController().CancelMouseDrag();
+                            return false;
+                        }
+                        // A short right-click over a part belongs to the stock
+                        // part menu; pausing the tool at the same time would be
+                        // surprising. The flight hover lives in
+                        // Viewport.ClosestHoveredPart (Vehicle.UpdateHighlight),
+                        // the editor's in VehicleEditor.Highlighted; the map view
+                        // sets neither, so its behavior is unchanged.
+                        bool overPart = Program.Editor != null
+                            ? Program.Editor.Highlighted != null
+                            : Program.MainViewport.ClosestHoveredPart != null;
+                        if (!overPart)
                             MeasureState.SetToolActive(false);
                     }
                 }
                 return true;
             }
 
-            if (button != GlfwMouseButton.Number1 || action != GlfwButtonAction.Press)
+            if (button != GlfwMouseButton.Number1)
+                return true;
+            if (action == GlfwButtonAction.Release)
+            {
+                if (_leftPressConsumed)
+                {
+                    _leftPressConsumed = false;
+                    return false;
+                }
+                return true;
+            }
+            if (action != GlfwButtonAction.Press)
                 return true;
             // Shift (stock target-set) and alt (stock focus modifier) pass through;
             // ctrl is ours: place a free point on the ecliptic plane, even where
@@ -105,6 +153,7 @@ internal static class Patch_MouseButton
             }
             // Consume the click even when nothing resolved (plane edge-on): while the
             // tool is armed, unmodified left clicks in a supported view belong to it.
+            _leftPressConsumed = true;
             return false;
         }
         catch (Exception ex)

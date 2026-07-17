@@ -33,6 +33,13 @@
       <HintPath>..\..\..\refs\game\Brutal.Glfw.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Vehicle.CenterOfMassAsmb / GetMatrixAsmb2Ego surface types from
+         OffsetMassProperties (Symmetric3x3), so the compiler needs the assembly
+         even though the mod never names a Bepu type. -->
+    <Reference Include="BepuUtilities">
+      <HintPath>..\..\..\refs\game\BepuUtilities.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <!-- Add more game DLL references as needed:
     <Reference Include="Brutal.Core.Strings">
       <HintPath>..\..\..\refs\game\Brutal.Core.Strings.dll</HintPath>
@@ -40,10 +47,6 @@
     </Reference>
     <Reference Include="CommunityToolkit.HighPerformance">
       <HintPath>..\..\..\refs\game\CommunityToolkit.HighPerformance.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="BepuUtilities">
-      <HintPath>..\..\..\refs\game\BepuUtilities.dll</HintPath>
       <Private>false</Private>
     </Reference>
     -->

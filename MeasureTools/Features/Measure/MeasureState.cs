@@ -13,6 +13,16 @@ internal static class MeasureState
 
     public static bool SnapEnabled = true;
 
+    // Part picking master switch: exact surface points under the cursor plus the
+    // two tiers below. Off = vehicles snap only at their center marker.
+    public static bool PartSnapEnabled = true;
+
+    // Screen-space snap tier to attach nodes and part bounding-box centers.
+    public static bool PartFeatureSnapEnabled = true;
+
+    // Screen-space snap tier to mesh vertices of the part under the cursor.
+    public static bool PartVertexSnapEnabled = true;
+
     // User-chosen reference body for free points; null = follow the map camera focus.
     public static Astronomical? ReferenceOverride;
 
@@ -100,6 +110,36 @@ internal static class MeasureState
         StateVersion++;
         if (DebugConfig.Measure)
             DefaultCategory.Log.Debug($"[MeasureTools] Snap {(enabled ? "enabled" : "disabled")}.");
+    }
+
+    public static void SetPartSnapEnabled(bool enabled)
+    {
+        if (PartSnapEnabled == enabled)
+            return;
+        PartSnapEnabled = enabled;
+        StateVersion++;
+        if (DebugConfig.Measure)
+            DefaultCategory.Log.Debug($"[MeasureTools] Part snap {(enabled ? "enabled" : "disabled")}.");
+    }
+
+    public static void SetPartFeatureSnapEnabled(bool enabled)
+    {
+        if (PartFeatureSnapEnabled == enabled)
+            return;
+        PartFeatureSnapEnabled = enabled;
+        StateVersion++;
+        if (DebugConfig.Measure)
+            DefaultCategory.Log.Debug($"[MeasureTools] Part feature snap {(enabled ? "enabled" : "disabled")}.");
+    }
+
+    public static void SetPartVertexSnapEnabled(bool enabled)
+    {
+        if (PartVertexSnapEnabled == enabled)
+            return;
+        PartVertexSnapEnabled = enabled;
+        StateVersion++;
+        if (DebugConfig.Measure)
+            DefaultCategory.Log.Debug($"[MeasureTools] Part vertex snap {(enabled ? "enabled" : "disabled")}.");
     }
 
     public static void SetReferenceOverride(Astronomical? body)
@@ -235,6 +275,9 @@ internal static class MeasureState
     {
         Mode = MeasureMode.Ruler;
         SnapEnabled = true;
+        PartSnapEnabled = true;
+        PartFeatureSnapEnabled = true;
+        PartVertexSnapEnabled = true;
         ToolActive = true;
         ReferenceOverride = null;
         HighlightIndex = -1;

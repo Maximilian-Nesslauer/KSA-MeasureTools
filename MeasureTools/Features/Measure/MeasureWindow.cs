@@ -111,7 +111,31 @@ internal sealed class MeasureWindow : ImGuiWindow
         bool snap = MeasureState.SnapEnabled;
         if (ImGui.Checkbox("Snap to bodies and orbit lines"u8, ref snap))
             MeasureState.SetSnapEnabled(snap);
-        DrawReferenceCombo(viewport);
+        // Part snapping is a refinement of general snapping, so the sub-controls
+        // disable together with the master snap toggle.
+        ImGui.BeginDisabled(!snap);
+        bool snapParts = MeasureState.PartSnapEnabled;
+        if (ImGui.Checkbox("Snap to parts"u8, ref snapParts))
+            MeasureState.SetPartSnapEnabled(snapParts);
+        if (ImGui.IsItemHovered())
+            ImGuiHelper.DrawTooltip("Pick points on vehicle parts: exact surface points under the cursor,\nrefined by the tiers below. Off: vehicles snap at their center marker only."u8);
+        ImGui.Indent();
+        ImGui.BeginDisabled(!snapParts);
+        bool snapNodes = MeasureState.PartFeatureSnapEnabled;
+        if (ImGui.Checkbox("Attach nodes and part centers"u8, ref snapNodes))
+            MeasureState.SetPartFeatureSnapEnabled(snapNodes);
+        bool snapVertices = MeasureState.PartVertexSnapEnabled;
+        if (ImGui.Checkbox("Mesh vertices"u8, ref snapVertices))
+            MeasureState.SetPartVertexSnapEnabled(snapVertices);
+        ImGui.EndDisabled();
+        ImGui.Unindent();
+        ImGui.EndDisabled();
+        // In the editor free points anchor to the editing space, so the system
+        // reference bodies do not apply.
+        if (Program.Editor != null)
+            ImGui.TextDisabled("Reference: edited vehicle"u8);
+        else
+            DrawReferenceCombo(viewport);
         ImGui.EndDisabled();
 
         ImGui.Separator();
