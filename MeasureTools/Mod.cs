@@ -31,8 +31,7 @@ public sealed class Mod
         _harmony = new Harmony("com.maxi.measuretools");
         // Apply each patch on its own so a future game change to one target does not
         // stop the other from being patched.
-        ApplyPatch(typeof(Patch_MenuBar), "View menu toggle");
-        ApplyPatch(typeof(Patch_EditorMenuBar), "editor menu toggle");
+        ApplyPatch(typeof(Patch_MenuBar), "Measure menu");
         ApplyPatch(typeof(Patch_MouseButton), "mouse intercept");
 
         DefaultCategory.Log.Info("[MeasureTools] Loaded.");
