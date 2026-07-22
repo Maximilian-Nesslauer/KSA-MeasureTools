@@ -859,7 +859,7 @@ internal static class MapPicker
                     PatchedConic patch = patches[i];
                     if (!Astronomical.ShouldDrawLines(patch.PrimaryBody, viewport, patch.Orbit))
                         continue;
-                    if (patch.Orbit.GetNearestPosition(viewport, mouseViewport, patch, out CelestialPosition? pos, lerp: true))
+                    if (patch.Orbit.GetNearestPosition(viewport, mouseViewport, patch, out CelestialPosition? pos, spliceVehicleFromNow: false))
                         TryAccept(pos, vehicle.Id, camera, viewport, mouseViewport, ref best, ref bestId);
                 }
                 CelestialPosition? burnPos = null;
@@ -872,7 +872,7 @@ internal static class MapPicker
                     continue;
                 if (!Astronomical.ShouldDrawLines(astronomical, viewport, celestial.Orbit))
                     continue;
-                if (celestial.Orbit.GetNearestPosition(viewport, mouseViewport, null, out CelestialPosition? pos, lerp: true))
+                if (celestial.Orbit.GetNearestPosition(viewport, mouseViewport, null, out CelestialPosition? pos, spliceVehicleFromNow: false))
                     TryAccept(pos, celestial.Id, camera, viewport, mouseViewport, ref best, ref bestId);
             }
         }
