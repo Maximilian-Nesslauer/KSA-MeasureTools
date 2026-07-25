@@ -63,14 +63,8 @@
     </None>
   </ItemGroup>
 
-  <Target Name="CopyToMods" AfterTargets="Build">
-    <PropertyGroup>
-      <ModDir>$(USERPROFILE)\Documents\My Games\Kitten Space Agency\mods\MeasureTools\</ModDir>
-    </PropertyGroup>
-    <MakeDir Directories="$(ModDir)" />
-    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(ModDir)" />
-    <Copy SourceFiles="mod.toml" DestinationFolder="$(ModDir)" />
-  </Target>
+  <!-- Deploy into the game's mods folder, plus the worktree-safety and game-is-running guards. -->
+  <Import Project="..\build\ModDeploy.targets" />
 
   <Target Name="PackageRelease" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <PropertyGroup>
