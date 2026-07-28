@@ -132,9 +132,10 @@ internal static class Patch_MouseButton
             }
             if (action != GlfwButtonAction.Press)
                 return true;
-            // Shift (stock target-set) and alt (stock focus modifier) pass through;
-            // ctrl is ours: place a free point on the ecliptic plane, even where
-            // snapping would win. Unmodified free clicks use the camera plane.
+            // Shift (stock target-set) and alt (stock focus modifier, and part
+            // duplication in the editor) pass through; ctrl is ours: place a free
+            // point on the ecliptic plane, even where snapping would win.
+            // Unmodified free clicks use the camera plane.
             if ((mods & (GlfwModifier.Shift | GlfwModifier.Alt)) != 0)
                 return true;
             bool eclipticFree = (mods & GlfwModifier.Control) != 0;
