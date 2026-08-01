@@ -654,9 +654,10 @@ internal static class MeasureOverlay
         // Spans roughly 40% of the half view height at the plane's distance.
         double radius = 0.4 * depth * Math.Tan(camera.GetFieldOfView() * 0.5);
 
-        // Basis vectors in the plane.
+        // Basis vectors in the plane. The seed is any ECL axis not near-parallel to the
+        // normal; which one only rotates the disc within its own plane, so it is invisible.
         double3 n = double3.Normalize(normal);
-        double3 seed = Math.Abs(double3.Dot(n, Double3Ex.Right)) < 0.9 ? Double3Ex.Right : Double3Ex.Forward;
+        double3 seed = Math.Abs(double3.Dot(n, double3.UnitX)) < 0.9 ? double3.UnitX : double3.UnitZ;
         double3 u = double3.Cross(n, seed).Normalized();
         double3 w = double3.Cross(n, u).Normalized();
 

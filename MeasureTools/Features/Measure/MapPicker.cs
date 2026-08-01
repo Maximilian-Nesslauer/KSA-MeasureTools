@@ -753,13 +753,17 @@ internal static class MapPicker
         float discCenterDist = 0f;
 
         // Tier 2: point-like snap to the nearest projected center. Only bodies the
-        // user can actually see qualify: those whose UI box the game drew most
-        // recently (IOrbiter.DrawnUiBox, the same gate stock hover/click uses;
-        // current frame on the preview path, previous frame on the click path since
-        // input callbacks run before the UI draw) and stars (always relevant, never
-        // boxed). Without this gate, every comet and asteroid in the system is a
-        // snap target even when nothing marks it on screen, and free placement
-        // becomes nearly impossible in a dense system.
+        // user can actually see qualify: those the game marked as cursor-hoverable on
+        // its most recent UI pass (IOrbiter.CursorHoverBox, the same gate stock
+        // hover/click uses; current frame on the preview path, previous frame on the
+        // click path since input callbacks run before the UI draw) and stars (always
+        // relevant, never boxed). The flag also covers bodies whose outline box was
+        // suppressed for being too large on screen; those stay safe because the flag is
+        // set under the same predicate that draws the name label, and a body big enough
+        // to lose its box is wider than CenterSnapRadiusPx, so the cursor is inside its
+        // visible disc whenever it wins here. Without this gate, every comet and
+        // asteroid in the system is a snap target even when nothing marks it on screen,
+        // and free placement becomes nearly impossible in a dense system.
         Astronomical? nearest = null;
         float nearestDist = CenterSnapRadiusPx;
 
@@ -770,7 +774,7 @@ internal static class MapPicker
                 continue;
             float d = float2.Distance(s, mouseViewport);
             bool visibleMarker = astronomical is StellarBody
-                || (astronomical is IOrbiter orbiter && orbiter.DrawnUiBox);
+                || (astronomical is IOrbiter orbiter && orbiter.CursorHoverBox);
             if (visibleMarker && d < nearestDist)
             {
                 nearestDist = d;
@@ -857,7 +861,10 @@ internal static class MapPicker
                 for (int i = patches.Count - 1; i >= 0; i--)
                 {
                     PatchedConic patch = patches[i];
-                    if (!Astronomical.ShouldDrawLines(patch.PrimaryBody, viewport, patch.Orbit))
+                    // Vehicle patches use the wider UI-or-lines gate, celestials below the
+                    // narrower lines-only one. Stock draws the same distinction in
+                    // SetNearestOrbitPoint; matching it keeps the candidate sets identical.
+                    if (!Astronomical.ShouldDrawUiOrLines(patch.PrimaryBody, viewport, patch.Orbit))
                         continue;
                     if (patch.Orbit.GetNearestPosition(viewport, mouseViewport, patch, out CelestialPosition? pos, spliceVehicleFromNow: false))
                         TryAccept(pos, vehicle.Id, camera, viewport, mouseViewport, ref best, ref bestId);
@@ -920,7 +927,7 @@ internal static class MapPicker
     // (so all points of one measurement share a depth basis), else through the
     // reference body. The ecliptic plane is the ECL XY plane, normal double3.UnitZ;
     // verified against orbit-point CCE offsets in-game (Earth's orbit has tiny Z,
-    // Hale-Bopp at 89 deg inclination has huge Z). Double3Ex.Up = (0,1,0) is the
+    // Hale-Bopp at 89 deg inclination has huge Z). Camera.UpView = (0,1,0) is the
     // camera-up convention, NOT the ecliptic normal.
     public static bool TryGetFreePlane(Viewport viewport, bool eclipticPlane, out double3 planePointEcl, out double3 normalEcl, out Astronomical? refBody)
     {
@@ -936,7 +943,7 @@ internal static class MapPicker
                 : Program.Editor.EditingSpace.PositionEcl;
             normalEcl = eclipticPlane
                 ? double3.UnitZ
-                : viewport.GetCamera().GetForward();
+                : viewport.GetCamera().GetForwardEcl();
             return true;
         }
         refBody = MeasureState.ResolveReferenceBody(viewport);
@@ -947,7 +954,7 @@ internal static class MapPicker
             : refBody.GetPositionEcl();
         normalEcl = eclipticPlane
             ? double3.UnitZ
-            : viewport.GetCamera().GetForward();
+            : viewport.GetCamera().GetForwardEcl();
         return true;
     }
 

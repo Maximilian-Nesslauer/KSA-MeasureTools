@@ -113,7 +113,17 @@ internal static class Patch_MouseButton
                             ? Program.Editor.Highlighted != null
                             : Program.MainViewport.ClosestHoveredPart != null;
                         if (!overPart)
+                        {
                             MeasureState.SetToolActive(false);
+                            // Consume the release for the same reason the cancel
+                            // branch does: BurnContextMenu.TryOpen runs on the right
+                            // release and would open the stock burn menu on top of
+                            // the pause whenever the cursor sits on an orbit line
+                            // that can take a burn. Nothing else wants this release,
+                            // since we already know no part is hovered.
+                            Program.HoveredViewport.GetActiveController().CancelMouseDrag();
+                            return false;
+                        }
                     }
                 }
                 return true;
