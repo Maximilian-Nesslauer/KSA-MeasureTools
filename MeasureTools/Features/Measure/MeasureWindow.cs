@@ -192,15 +192,15 @@ internal sealed class MeasureWindow : ImGuiWindow
     private static void DrawModeButton(ImString label, MeasureMode mode, float width)
     {
         bool selected = MeasureState.ToolActive && MeasureState.Mode == mode;
-        if (selected)
-            ImGui.PushStyleColor(ImGuiCol.Button, ImGui.GetStyleColorVec4(ImGuiCol.ButtonActive));
-        if (ImGui.Button(label, new float2(width, 0f)))
+        float2 size = new float2(width, ConsoleWidgets.ButtonHeight);
+        bool clicked = selected
+            ? ConsoleWidgets.PrimaryButton(label.ToString().AsSpan(), label.ToString().AsSpan(), size)
+            : ConsoleWidgets.Button(label.ToString().AsSpan(), label.ToString().AsSpan(), size);
+        if (clicked)
         {
             MeasureState.SetMode(mode);
             MeasureState.SetToolActive(true);
         }
-        if (selected)
-            ImGui.PopStyleColor();
     }
 
     private void DrawSnappingSection(Viewport viewport)
@@ -211,28 +211,25 @@ internal sealed class MeasureWindow : ImGuiWindow
         bool snapControlsApply = MeasureState.Mode == MeasureMode.Ruler || MeasureState.Mode == MeasureMode.Angle;
         ImGui.BeginDisabled(!MeasureState.ToolActive || !snapControlsApply);
         bool snap = MeasureState.SnapEnabled;
-        if (ImGui.Checkbox("Bodies and orbit lines"u8, ref snap))
+        if (ConsoleUi.CheckboxRow("BODIES AND ORBIT LINES".AsSpan(), "MtSnap".AsSpan(), ref snap))
             MeasureState.SetSnapEnabled(snap);
         // Part snapping is a refinement of general snapping, so the sub-controls
         // disable together with the master snap toggle.
         ImGui.BeginDisabled(!snap);
         bool snapParts = MeasureState.PartSnapEnabled;
-        if (ImGui.Checkbox("Parts"u8, ref snapParts))
+        if (ConsoleUi.CheckboxRow("PARTS".AsSpan(), "MtSnapParts".AsSpan(), ref snapParts,
+                "Pick points on vehicle parts: exact surface points under the cursor, refined by the tiers below. Off: vehicles snap at their center marker only.".AsSpan()))
             MeasureState.SetPartSnapEnabled(snapParts);
-        if (ImGui.IsItemHovered())
-            ImGuiHelper.DrawTooltip("Pick points on vehicle parts: exact surface points under the cursor,\nrefined by the tiers below. Off: vehicles snap at their center marker only."u8);
         ImGui.Indent();
         ImGui.BeginDisabled(!snapParts);
         bool snapNodes = MeasureState.PartFeatureSnapEnabled;
-        if (ImGui.Checkbox("Nodes, centers, rims"u8, ref snapNodes))
+        if (ConsoleUi.CheckboxRow("NODES, CENTERS, RIMS".AsSpan(), "MtSnapNodes".AsSpan(), ref snapNodes,
+                "Point targets: attach nodes, part centers, fitted rim centers, and the mirror of the previous point across the part axis.".AsSpan()))
             MeasureState.SetPartFeatureSnapEnabled(snapNodes);
-        if (ImGui.IsItemHovered())
-            ImGuiHelper.DrawTooltip("Point targets: attach nodes, part centers, fitted rim centers,\nand the mirror of the previous point across the part axis."u8);
         bool snapVertices = MeasureState.PartVertexSnapEnabled;
-        if (ImGui.Checkbox("Vertices and edges"u8, ref snapVertices))
+        if (ConsoleUi.CheckboxRow("VERTICES AND EDGES".AsSpan(), "MtSnapVerts".AsSpan(), ref snapVertices,
+                "Vertices, feature-edge midpoints, and sliding along feature edges (tank rims and other sharp or boundary edges).".AsSpan()))
             MeasureState.SetPartVertexSnapEnabled(snapVertices);
-        if (ImGui.IsItemHovered())
-            ImGuiHelper.DrawTooltip("Vertices, feature-edge midpoints, and sliding along feature edges\n(tank rims and other sharp or boundary edges)."u8);
         ImGui.EndDisabled();
         ImGui.Unindent();
         ImGui.EndDisabled();
@@ -240,7 +237,7 @@ internal sealed class MeasureWindow : ImGuiWindow
         // reference bodies do not apply.
         if (Program.Editor != null)
         {
-            ImGui.TextDisabled("Reference: edited vehicle"u8);
+            ConsoleUi.Muted("REFERENCE: EDITED VEHICLE".AsSpan());
         }
         else
         {
