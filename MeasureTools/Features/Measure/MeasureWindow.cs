@@ -177,25 +177,28 @@ internal sealed class MeasureWindow : ImGuiWindow
         bool oneRow = fiveAcross >= minWidth;
         float width = oneRow ? fiveAcross : (available - spacing * 2f) / 3f;
 
-        DrawModeButton("Ruler"u8, MeasureMode.Ruler, width);
+        DrawModeButton("Ruler", MeasureMode.Ruler, width);
         ImGui.SameLine();
-        DrawModeButton("Protractor"u8, MeasureMode.Angle, width);
+        DrawModeButton("Protractor", MeasureMode.Angle, width);
         ImGui.SameLine();
-        DrawModeButton("Surface"u8, MeasureMode.Surface, width);
+        DrawModeButton("Surface", MeasureMode.Surface, width);
         if (oneRow)
             ImGui.SameLine();
-        DrawModeButton("Circle"u8, MeasureMode.Circle, width);
+        DrawModeButton("Circle", MeasureMode.Circle, width);
         ImGui.SameLine();
-        DrawModeButton("Face angle"u8, MeasureMode.FaceAngle, width);
+        DrawModeButton("Face angle", MeasureMode.FaceAngle, width);
     }
 
-    private static void DrawModeButton(ImString label, MeasureMode mode, float width)
+    // The label doubles as the widget id, so it goes in as a char span: the
+    // ConsoleWidgets overloads take one directly, while an ImString would have to be
+    // converted back per button per frame.
+    private static void DrawModeButton(ReadOnlySpan<char> label, MeasureMode mode, float width)
     {
         bool selected = MeasureState.ToolActive && MeasureState.Mode == mode;
         float2 size = new float2(width, ConsoleWidgets.ButtonHeight);
         bool clicked = selected
-            ? ConsoleWidgets.PrimaryButton(label.ToString().AsSpan(), label.ToString().AsSpan(), size)
-            : ConsoleWidgets.Button(label.ToString().AsSpan(), label.ToString().AsSpan(), size);
+            ? ConsoleWidgets.PrimaryButton(label, label, size)
+            : ConsoleWidgets.Button(label, label, size);
         if (clicked)
         {
             MeasureState.SetMode(mode);

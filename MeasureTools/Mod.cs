@@ -14,7 +14,7 @@ public sealed class Mod
 {
     private static Harmony? _harmony;
 
-    private const string TestedGameVersion = "v2026.8.5.5168";
+    private const string TestedGameVersion = "v2026.8.19.5261";
 
     [StarMapAllModsLoaded]
     public void OnFullyLoaded()
@@ -65,8 +65,6 @@ public sealed class Mod
 #endif
             MeasureState.Prune();
             Viewport viewport = Program.MainViewport;
-            if (viewport == null)
-                return;
             MeasureWindow.DrawActive(viewport);
             MeasureOverlay.Draw(viewport);
         }

@@ -47,6 +47,24 @@ internal static class Patch_MouseButton
         _leftPressConsumed = false;
     }
 
+    // Drop the drag the consumed right release would otherwise have ended. Stock's
+    // own consume sites (Vehicle.OnMouseButton, VehicleEditor.OnMouseButton) call
+    // Controller.CancelMouseDrag for this, but its base body is empty and only
+    // OrbitController and FlyController override it. MapController instead clears
+    // RotateMouseDragging inside its own OnMouseButton, which the consumed release
+    // never reaches, so the map camera stays in rotate-drag with the cursor captured
+    // (MapController.GetCursorMode returns Disabled) and spins with every mouse move.
+    // Stock never hits that because it only consumes clicks in the Orbit view; this
+    // tool is armed in the map view too. The right press is not consumed, so stock
+    // has already cleared TranslateMouseDragging by the time we get here.
+    private static void CancelControllerDrag()
+    {
+        Controller controller = Program.HoveredViewport.GetActiveController();
+        controller.CancelMouseDrag();
+        if (controller is MapController map)
+            map.RotateMouseDragging = false;
+    }
+
     [HarmonyPrefix]
     private static bool Prefix(GlfwMouseButton button, GlfwButtonAction action, GlfwModifier mods)
     {
@@ -98,9 +116,8 @@ internal static class Patch_MouseButton
                             // Consume the release so canceling does not also open
                             // the stock part context menu (Vehicle.OnMouseButton
                             // opens it for the hovered part on a short right
-                            // release). Stock cancels the controller's pending
-                            // drag the same way before consuming the release.
-                            Program.HoveredViewport.GetActiveController().CancelMouseDrag();
+                            // release).
+                            CancelControllerDrag();
                             return false;
                         }
                         // A short right-click over a part belongs to the stock
@@ -121,7 +138,7 @@ internal static class Patch_MouseButton
                             // the pause whenever the cursor sits on an orbit line
                             // that can take a burn. Nothing else wants this release,
                             // since we already know no part is hovered.
-                            Program.HoveredViewport.GetActiveController().CancelMouseDrag();
+                            CancelControllerDrag();
                             return false;
                         }
                     }

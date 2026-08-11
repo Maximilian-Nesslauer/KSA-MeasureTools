@@ -45,6 +45,12 @@
       <HintPath>..\..\..\refs\game\Brutal.Core.Common.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Core.SpanBuilder, which the overlay composes multi-part labels with and
+         which every ContextReference.ToNearest overload set now contains. -->
+    <Reference Include="Planet.Render.Core">
+      <HintPath>..\..\..\refs\game\Planet.Render.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <!-- Add more game DLL references as needed:
     <Reference Include="Brutal.Core.Strings">
       <HintPath>..\..\..\refs\game\Brutal.Core.Strings.dll</HintPath>

@@ -24,8 +24,14 @@ internal static class MapPicker
     // center, outside the disc it still catches a slightly-off click.
     private const float LimbSnapTolerancePx = 10f;
 
-    // Our own acceptance radius for orbit-point candidates, as a fraction of the
-    // viewport height (0.025 * height matches the 0.05 NDC threshold stock intends).
+    // Acceptance radius for orbit-point candidates, as a fraction of the viewport
+    // height. Stock filters at 0.025 in NDC units (Orbit.GetNearestPosition), which
+    // on a landscape viewport is 0.0125 * height vertically and 0.0125 * width
+    // horizontally; an isotropic 0.025 * height circumscribes that ellipse from 16:9
+    // on, so there this rejects only what IsOnScreenNearCursor exists for. Stock
+    // scales the NDC x term by an INTEGER width / height, which is 0 on a portrait
+    // viewport and drops the x term entirely, and against that unbounded band this
+    // radius is the narrower gate.
     private const float OrbitSnapMaxScreenFraction = 0.025f;
 
     // Part picking runs only when the vehicle's bounding sphere projects at least
@@ -124,8 +130,13 @@ internal static class MapPicker
             return null;
 
         // Ego axes are ECL axes, so lifting the hit point is a translation by the
-        // camera position; lat/lon then come from the body-fixed frame.
-        double3 hitEcl = camera.PositionEcl + ray.Direction * bestT;
+        // camera position; lat/lon then come from the body-fixed frame. The origin
+        // comes from the ray, not from the camera: ScreenToEgoRay starts a
+        // perspective ray at the camera but an orthographic one at the cursor's own
+        // near-plane point, which is what the vehicle editor's Projection toggle
+        // switches to. EgoToEcl is a pure translation, so this is PositionEcl in the
+        // perspective case.
+        double3 hitEcl = camera.EgoToEcl(ray.Origin) + ray.Direction * bestT;
         double3 hitCce = best.GetPositionCceFromEcl(hitEcl);
         double latitude = best.GetLatitudeFromCce(hitCce);
         double longitude = best.GetLongitudeFromCce(hitCce);
@@ -261,7 +272,7 @@ internal static class MapPicker
             double radius = vehicle.MeanRadius;
             if (!(radius > 0.0))
                 continue;
-            if (camera.GetObjectDiameterPixelsAsDouble(radius * 2.0, vehiclePosEgo.Length()) < PartVehicleMinDiameterPx)
+            if (camera.GetObjectDiameterPixels(radius * 2.0, vehiclePosEgo.Length()) < PartVehicleMinDiameterPx)
                 continue;
 
             double4x4 matrixVehicleAsmb2Ego = vehicle.GetMatrixAsmb2Ego(vehiclePosEgo);
@@ -733,9 +744,13 @@ internal static class MapPicker
         return found;
     }
 
-    // Unified body snap: discs and dots. The stock HoveredOrbiter flag is not used
-    // here (it is a boolean box test that cannot distinguish center from limb); one
-    // scan computes the projected center and disc radius for every body instead.
+    // Unified body snap: discs and dots. Stock's own arbitration (CursorTarget, fed
+    // by Astronomical.UpdateMouseHover) is not the pick here: it resolves one winner
+    // across bodies, burn gizmos and orbit points, it knows no limb and no tolerance
+    // band outside the sphere, and it runs once per frame for the hovered viewport at
+    // the live cursor, so a placement click (a GLFW callback ahead of that update)
+    // would land on the previous frame's target. One scan computes the projected
+    // center and disc radius for every body instead.
     private static Anchor? PickBody(Viewport viewport, float2 mouseViewport)
     {
 #if DEBUG
@@ -754,16 +769,17 @@ internal static class MapPicker
 
         // Tier 2: point-like snap to the nearest projected center. Only bodies the
         // user can actually see qualify: those the game marked as cursor-hoverable on
-        // its most recent UI pass (IOrbiter.CursorHoverBox, the same gate stock
-        // hover/click uses; current frame on the preview path, previous frame on the
-        // click path since input callbacks run before the UI draw) and stars (always
-        // relevant, never boxed). The flag also covers bodies whose outline box was
-        // suppressed for being too large on screen; those stay safe because the flag is
-        // set under the same predicate that draws the name label, and a body big enough
-        // to lose its box is wider than CenterSnapRadiusPx, so the cursor is inside its
-        // visible disc whenever it wins here. Without this gate, every comet and
-        // asteroid in the system is a snap target even when nothing marks it on screen,
-        // and free placement becomes nearly impossible in a dense system.
+        // its most recent UI pass (Astronomical.CursorHoverEligible, the gate stock
+        // feeds its own hover test from; current frame on the preview path, previous
+        // frame on the click path since input callbacks run before the UI draw) and
+        // stars, which carry no orbit and so are never marked, yet are always relevant.
+        // The flag also covers bodies whose outline box was suppressed for being too
+        // large on screen; those stay safe because IOrbiter.OnDrawUi sets it under the
+        // same predicate that draws the name label, and a body big enough to lose its
+        // box is wider than CenterSnapRadiusPx, so the cursor is inside its visible
+        // disc whenever it wins here. Without this gate, every comet and asteroid in
+        // the system is a snap target even when nothing marks it on screen, and free
+        // placement becomes nearly impossible in a dense system.
         Astronomical? nearest = null;
         float nearestDist = CenterSnapRadiusPx;
 
@@ -773,18 +789,25 @@ internal static class MapPicker
             if (float.IsNaN(s.X) || float.IsNaN(s.Y))
                 continue;
             float d = float2.Distance(s, mouseViewport);
-            bool visibleMarker = astronomical is StellarBody
-                || (astronomical is IOrbiter orbiter && orbiter.CursorHoverBox);
+            bool visibleMarker = astronomical is StellarBody || astronomical.CursorHoverEligible;
             if (visibleMarker && d < nearestDist)
             {
                 nearestDist = d;
                 nearest = astronomical;
             }
 
+            // Only bodies with a real surface are disc and limb targets. A vehicle's
+            // MeanRadius is its bounding-sphere radius, so without this a click in
+            // the band around that invisible sphere would resolve to a "surface"
+            // point touching no geometry; vehicles stay reachable through the centre
+            // snap above and through part picking.
+            if (astronomical is Vehicle)
+                continue;
+
             double distance = (astronomical.GetPositionEcl() - camera.PositionEcl).Length();
             if (!(distance > astronomical.MeanRadius))
                 continue;
-            float radiusPx = (float)(camera.GetObjectDiameterPixelsAsDouble(astronomical.MeanRadius * 2.0, distance) * 0.5);
+            float radiusPx = (float)(camera.GetObjectDiameterPixels(astronomical.MeanRadius * 2.0, distance) * 0.5);
             if (radiusPx < MinLimbDiscPx || d > radiusPx + LimbSnapTolerancePx)
                 continue;
             if (radiusPx < discRadiusPx)
@@ -816,7 +839,7 @@ internal static class MapPicker
     private static Anchor? SnapToLimb(Camera camera, float2 mouseViewport, Astronomical body)
     {
         Ray ray = camera.ScreenToEgoRay(mouseViewport);
-        double3 origin = camera.PositionEcl;
+        double3 origin = camera.EgoToEcl(ray.Origin);
         double3 center = body.GetPositionEcl();
         double t = double3.Dot(center - origin, ray.Direction);
         if (!(t > 0.0))
@@ -846,8 +869,7 @@ internal static class MapPicker
             return null;
         Camera camera = viewport.GetCamera();
 
-        CelestialPosition? best = null;
-        string bestId = "";
+        var best = default(OrbitCandidate);
 
         foreach (Astronomical astronomical in system.All.AsSpan())
         {
@@ -867,11 +889,11 @@ internal static class MapPicker
                     if (!Astronomical.ShouldDrawUiOrLines(patch.PrimaryBody, viewport, patch.Orbit))
                         continue;
                     if (patch.Orbit.GetNearestPosition(viewport, mouseViewport, patch, out CelestialPosition? pos, spliceVehicleFromNow: false))
-                        TryAccept(pos, vehicle.Id, camera, viewport, mouseViewport, ref best, ref bestId);
+                        TryAccept(pos, vehicle, camera, viewport, mouseViewport, ref best);
                 }
                 CelestialPosition? burnPos = null;
                 if (vehicle.FlightComputer.BurnPlan.GetNearestOrbitPoint(viewport, mouseViewport, ref burnPos))
-                    TryAccept(burnPos, vehicle.Id, camera, viewport, mouseViewport, ref best, ref bestId);
+                    TryAccept(burnPos, vehicle, camera, viewport, mouseViewport, ref best);
             }
             else if (astronomical is Celestial celestial)
             {
@@ -880,40 +902,50 @@ internal static class MapPicker
                 if (!Astronomical.ShouldDrawLines(astronomical, viewport, celestial.Orbit))
                     continue;
                 if (celestial.Orbit.GetNearestPosition(viewport, mouseViewport, null, out CelestialPosition? pos, spliceVehicleFromNow: false))
-                    TryAccept(pos, celestial.Id, camera, viewport, mouseViewport, ref best, ref bestId);
+                    TryAccept(pos, celestial, camera, viewport, mouseViewport, ref best);
             }
         }
 
-        if (!best.HasValue)
+        if (!best.Position.HasValue || best.Owner == null)
             return null;
-        CelestialPosition cp = best.Value;
-        return Anchor.OnOrbit(cp.Parent, cp.Point.PositionCce, bestId);
+        CelestialPosition cp = best.Position.Value;
+        return Anchor.OnOrbit(cp.Parent, cp.Point.PositionCce, best.Owner.Id);
     }
 
-    // Keep the candidate if it is on screen near the cursor and closer than the best
-    // so far. Shared by the three orbit-candidate sources (flight-plan patches, the
-    // burn plan, celestial orbits), all of which produce a nullable CelestialPosition.
-    private static void TryAccept(CelestialPosition? candidate, string id, Camera camera, Viewport viewport, float2 mouseViewport, ref CelestialPosition? best, ref string bestId)
+    // The best orbit-line candidate so far. The owner travels with the point because
+    // stock's IsBetterThan breaks a near-tie in screen distance by camera depth and,
+    // at equal depth, by the owner's radius (HoverRanking), so comparing two
+    // candidates needs both their orbiters.
+    private struct OrbitCandidate
+    {
+        public CelestialPosition? Position;
+        public Astronomical? Owner;
+    }
+
+    // Keep the candidate if it is on screen near the cursor and beats the best so
+    // far. Shared by the three orbit-candidate sources (flight-plan patches, the burn
+    // plan, celestial orbits), all of which produce a nullable CelestialPosition.
+    private static void TryAccept(CelestialPosition? candidate, Astronomical owner, Camera camera, Viewport viewport,
+        float2 mouseViewport, ref OrbitCandidate best)
     {
         if (candidate.HasValue
             && IsOnScreenNearCursor(candidate.Value, camera, viewport, mouseViewport)
-            && candidate.Value.IsBetterThan(camera, mouseViewport, best))
+            && candidate.Value.IsBetterThan(camera, mouseViewport, best.Position,
+                owner.MeanRadius, best.Owner?.MeanRadius ?? 0.0))
         {
-            best = candidate;
-            bestId = id;
+            best.Position = candidate;
+            best.Owner = owner;
         }
     }
 
     // Re-validate an orbit-point candidate on screen. Stock GetNearestPoint has a
-    // latent NaN hole: a candidate that projects behind the camera has a NaN screen
-    // position (EclToScreen with ignoreBehind), its NDC distance check evaluates to
-    // (NaN > threshold) == false, and the bogus point is ACCEPTED (e.g. a click near
-    // Earth grabbing a point on the Uranus orbit plane behind the camera). Such a
-    // candidate also distorts IsBetterThan, which projects through the NDC path
-    // without a behind-camera guard and can yield a deceptively small distance for
-    // it, shadowing real candidates. Stock never hits this because it only consumes
-    // results for the controlled vehicle's nearby orbits; our scan over every
-    // celestial does.
+    // latent NaN hole on closed orbits: a candidate behind the camera projects to
+    // NaN (the screen projection drops behind-camera points), its NDC distance check
+    // evaluates to (NaN > threshold) == false, and the bogus point is ACCEPTED, e.g.
+    // a click near Earth grabbing a point on the Uranus orbit plane behind the
+    // camera. Such a candidate also distorts IsBetterThan, which projects with
+    // ignoreBehind: false and can score the mirrored position deceptively close,
+    // shadowing real candidates. The hyperbolic branch guards its own samples.
     private static bool IsOnScreenNearCursor(CelestialPosition candidate, Camera camera, Viewport viewport, float2 mouseViewport)
     {
         float2 s = candidate.Point.GetPositionScreen(candidate.Parent, camera);
@@ -965,11 +997,15 @@ internal static class MapPicker
         Camera camera = viewport.GetCamera();
 
         // Ego axes are ECL axes (Camera.EgoToEcl is a pure translation), so the ego
-        // ray direction is an ECL direction and the ray origin is the camera position.
+        // ray direction is an ECL direction and lifting its origin is a translation.
+        // Taking the origin from the ray rather than assuming the camera keeps this
+        // correct under the editor's orthographic projection, where every cursor
+        // position gets the same direction and its own near-plane origin.
         Ray ray = camera.ScreenToEgoRay(mouseViewport);
-        if (!MathEx.RayPlaneIntersection(camera.PositionEcl, ray.Direction, planePoint, normal, out double t) || !(t > 0.0))
+        double3 originEcl = camera.EgoToEcl(ray.Origin);
+        if (!MathEx.RayPlaneIntersection(originEcl, ray.Direction, planePoint, normal, out double t) || !(t > 0.0))
             return null;
-        double3 pointEcl = camera.PositionEcl + ray.Direction * t;
+        double3 pointEcl = originEcl + ray.Direction * t;
         if (Program.Editor != null)
             return Anchor.EditorFree(pointEcl - Program.Editor.EditingSpace.PositionEcl);
         if (refBody == null)

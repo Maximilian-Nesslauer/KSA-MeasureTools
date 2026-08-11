@@ -305,8 +305,11 @@ internal static class MeasureColors
         catch (Exception ex)
         {
             // File IO can legitimately fail (permissions, sync tools); the
-            // shipped palettes keep the mod fully usable.
-            LogHelper.WarnOnce("colors-load", $"[MeasureTools] Could not load {path}, using default palettes: {ex.Message}");
+            // shipped palettes keep the mod fully usable. Clearing the dirty flag
+            // the static constructor set is what stops the unload save from
+            // overwriting a file we could not read with those defaults.
+            _dirty = false;
+            LogHelper.WarnOnce("colors-load", $"[MeasureTools] Could not load {path}, keeping default palettes in memory and leaving {FileName} untouched: {ex.Message}");
         }
     }
 

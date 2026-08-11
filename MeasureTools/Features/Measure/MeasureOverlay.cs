@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using Brutal.ImGuiApi;
 using Brutal.Numerics;
+using Core;
 using KSA;
 using MeasureTools.Core;
 
@@ -122,8 +123,15 @@ internal static class MeasureOverlay
             // Same-vehicle part measurements get the CAD-style component line:
             // along the stack axis and perpendicular to it.
             if (m.TryGetAxialRadialMeters(out double axial, out double radial))
-                Label(dl, new float2(labelPos.X, labelPos.Y + LabelStackStep()),
-                    "ax " + FormatDistance(axial) + "  rad " + FormatDistance(radial));
+            {
+                Span<char> buffer = stackalloc char[96];
+                var sb = new SpanBuilder(buffer);
+                sb.Append("ax ");
+                DistanceReference.ToNearest(axial, ref sb);
+                sb.Append("  rad ");
+                DistanceReference.ToNearest(radial, ref sb);
+                Label(dl, new float2(labelPos.X, labelPos.Y + LabelStackStep()), sb);
+            }
         }
         else if (m.Mode == MeasureMode.Angle)
         {
@@ -163,7 +171,7 @@ internal static class MeasureOverlay
         float2 rim = vpPos + camera.EclToScreen(rimEcl);
         float2 labelAnchor = Valid(rim) ? rim : center;
         if (Valid(labelAnchor))
-            Label(dl, new float2(labelAnchor.X + 12f, labelAnchor.Y - 16f), "d " + FormatDistance(m.CircleDiameterMeters()));
+            LabelDiameter(dl, new float2(labelAnchor.X + 12f, labelAnchor.Y - 16f), m.CircleDiameterMeters());
     }
 
     // FaceAngle measurement: dots on both sampled points, their surface normals
@@ -225,7 +233,7 @@ internal static class MeasureOverlay
         double distance = (originEcl - camera.PositionEcl).Length();
         if (!(distance > 0.0))
             return;
-        double pxPerMeter = camera.GetObjectDiameterPixelsAsDouble(1.0, distance);
+        double pxPerMeter = camera.GetObjectDiameterPixels(1.0, distance);
         if (!(pxPerMeter > 1e-9))
             return;
         double3 tipEcl = originEcl + normalEcl.Value * (40.0 / pxPerMeter);
@@ -261,9 +269,14 @@ internal static class MeasureOverlay
             return;
         var labelPos = new float2(labelAnchor.X + 10f, labelAnchor.Y - 32f);
         LabelDistance(dl, labelPos, m.SurfaceDistanceMeters());
-        string detail = "chord " + FormatDistance((aEcl - bEcl).Length())
-            + "  brg " + m.BearingDegrees().ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " deg";
-        Label(dl, new float2(labelPos.X, labelPos.Y + LabelStackStep()), detail);
+        Span<char> buffer = stackalloc char[96];
+        var sb = new SpanBuilder(buffer);
+        sb.Append("chord ");
+        DistanceReference.ToNearest((aEcl - bEcl).Length(), ref sb);
+        sb.Append("  brg ");
+        sb.Append(m.BearingDegrees(), "0");
+        sb.Append(" deg");
+        Label(dl, new float2(labelPos.X, labelPos.Y + LabelStackStep()), sb);
     }
 
     // The great-circle arc between two surface points, sampled along the sphere and
@@ -459,8 +472,7 @@ internal static class MeasureOverlay
                 if (normalEcl != null)
                     DrawWorldCircle(dl, camera, vpPos, centerEcl, rimEcl - centerEcl, normalEcl.Value, PendingColor, 2.4f);
                 dl.AddCircleFilled(in cursor, 3.5f, PreviewColor);
-                Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f),
-                    "d " + FormatDistance((rimEcl - centerEcl).Length() * 2.0));
+                LabelDiameter(dl, new float2(cursor.X + 12f, cursor.Y - 16f), (rimEcl - centerEcl).Length() * 2.0);
             }
             return;
         }
@@ -570,11 +582,12 @@ internal static class MeasureOverlay
                 DrawConstructionPlane(dl, camera, viewport, vpPos, cursor, eclipticPlane);
                 // Spell out which plane the point will land on, so an unexpected
                 // plane mode or reference body is visible before the click.
-                string plane = eclipticPlane ? "ecliptic plane" : "camera plane";
-                string reference = preview.Kind == AnchorKind.EditorFreePoint
-                    ? "editor"
-                    : preview.Body?.Id ?? "?";
-                Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f), plane + " @ " + reference);
+                Span<char> buffer = stackalloc char[96];
+                var sb = new SpanBuilder(buffer);
+                sb.Append(eclipticPlane ? "ecliptic plane" : "camera plane");
+                sb.Append(" @ ");
+                sb.Append(preview.Kind == AnchorKind.EditorFreePoint ? "editor" : preview.Body?.Id ?? "?");
+                Label(dl, new float2(cursor.X + 12f, cursor.Y - 16f), sb);
                 break;
         }
     }
@@ -636,7 +649,7 @@ internal static class MeasureOverlay
         double distance = (body.GetPositionEcl() - camera.PositionEcl).Length();
         if (!(distance > body.MeanRadius))
             return;
-        float radiusPx = (float)(camera.GetObjectDiameterPixelsAsDouble(body.MeanRadius * 2.0, distance) * 0.5);
+        float radiusPx = (float)(camera.GetObjectDiameterPixels(body.MeanRadius * 2.0, distance) * 0.5);
         dl.AddCircle(in center, radiusPx, PreviewFaint, 64, 1f);
     }
 
@@ -735,12 +748,6 @@ internal static class MeasureOverlay
         return vpPos + camera.EclToScreen(anchor.ResolveEcl());
     }
 
-    private static string FormatDistance(double meters)
-    {
-        Span<char> buffer = stackalloc char[64];
-        return new string(DistanceReference.ToNearest(meters, buffer));
-    }
-
     private static void Dot(ImDrawListPtr dl, float2 s, byte4 color)
     {
         dl.AddCircleFilled(in s, 4f, color);
@@ -764,8 +771,8 @@ internal static class MeasureOverlay
         return ImGui.GetTextLineHeightWithSpacing() + 6f;
     }
 
-    // ImString accepts strings and char spans alike and copies span text into
-    // ImGui's arena, so span callers (LabelDistance, the degree labels) skip the
+    // ImString accepts strings, char spans and a SpanBuilder alike, and copies span
+    // text into ImGui's arena, so callers that format into a stack buffer skip the
     // per-frame string allocation entirely.
     private static void Label(ImDrawListPtr dl, float2 pos, ImString text)
     {
@@ -784,6 +791,15 @@ internal static class MeasureOverlay
     {
         Span<char> buffer = stackalloc char[64];
         Label(dl, pos, DistanceReference.ToNearest(meters, buffer));
+    }
+
+    private static void LabelDiameter(ImDrawListPtr dl, float2 pos, double meters)
+    {
+        Span<char> buffer = stackalloc char[64];
+        var sb = new SpanBuilder(buffer);
+        sb.Append("d ");
+        DistanceReference.ToNearest(meters, ref sb);
+        Label(dl, pos, sb);
     }
 
     private static void LabelDegrees(ImDrawListPtr dl, float2 pos, double angleRadians)
