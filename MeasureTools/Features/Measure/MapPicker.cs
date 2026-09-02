@@ -63,7 +63,7 @@ internal static class MapPicker
     // default full scan: input callbacks run before the frame's UI draw, where
     // the stock value is still a frame stale, so forgetting the flag costs a
     // redundant scan instead of a wrong pick.
-    public static Anchor? Pick(Viewport viewport, float2 mouseViewport, bool eclipticFree = false, bool reuseStockHover = false)
+    public static Anchor? Pick(IGameViewport viewport, float2 mouseViewport, bool eclipticFree = false, bool reuseStockHover = false)
     {
         // Surface mode has its own picking: ray versus the celestial spheres, no
         // body/orbit snapping and no free placement. FaceAngle picks raw part
@@ -98,7 +98,7 @@ internal static class MapPicker
     // frame, so it tracks rotation like a ground marker. Once the first pin is
     // down, only its body is a valid target; the great-circle math needs both
     // points on one sphere.
-    private static Anchor? PickSurface(Viewport viewport, float2 mouseViewport)
+    private static Anchor? PickSurface(IViewport viewport, float2 mouseViewport)
     {
         CelestialSystem? system = Universe.CurrentSystem;
         if (system == null)
@@ -185,7 +185,7 @@ internal static class MapPicker
     // projects large enough, with a bounding-sphere pre-check per vehicle.
     // Optionally collects point-feature candidates along the way so PickPart
     // shares the vehicle gating with the mode-specific pickers.
-    private static bool TryGetMeshHit(Viewport viewport, float2 mouseViewport, bool scanFeatures, bool reuseStockHover,
+    private static bool TryGetMeshHit(IGameViewport viewport, float2 mouseViewport, bool scanFeatures, bool reuseStockHover,
         ref FeatureCandidate feature, out Camera camera, out Vehicle? hitVehicle, out PartHit hit)
     {
         camera = viewport.GetCamera();
@@ -217,19 +217,16 @@ internal static class MapPicker
         if (system == null)
             return false;
 
-        // Preview picks in the flight Orbit view reuse the stock hover raycast:
-        // Vehicle.UpdateHighlight has already watertight-raycast every drawn
-        // vehicle's parts this frame and stored the globally nearest full part
-        // in Viewport.ClosestHoveredPart (CelestialSystem.OnDrawUi resets it
-        // before the draw loop, and [StarMapAfterGui] runs after it), so a full
-        // scan here would duplicate that work. The cursor-mode clause mirrors
-        // stock's own gate: during camera drags Vehicle.UpdateHighlight never
-        // runs and the field stays null WITHOUT meaning "no part there".
+        // Vehicle.UpdateHighlight already raycast every drawn vehicle into the
+        // viewport's picker this frame, so reuse that instead of scanning again.
+        // The gate is its own early-out: each clause is a case where the picker
+        // reads null WITHOUT meaning "no part there".
         bool hoverShortcut = reuseStockHover
-            && viewport == Program.MainViewport
+            && CursorTarget.IsHitTestViewport(viewport)
             && viewport.Mode == CameraMode.Orbit
-            && Program.GetCursorMode() == GlfwCursorMode.Normal;
-        Part? stockHovered = hoverShortcut ? viewport.ClosestHoveredPart : null;
+            && Program.GetCursorMode() == GlfwCursorMode.Normal
+            && !Program.IsModalOpen();
+        Part? stockHovered = hoverShortcut ? viewport.PartPicker.Part : null;
 
         // With the shortcut active and stock reporting no hovered part, every
         // mesh raycast is a guaranteed miss; without a feature scan to run there
@@ -336,7 +333,7 @@ internal static class MapPicker
     // closest point on a feature edge > the raw watertight surface hit, which is
     // always exactly under the cursor and so stays the fallback. No result falls
     // through to the body/orbit/free picking.
-    private static Anchor? PickPart(Viewport viewport, float2 mouseViewport, bool reuseStockHover)
+    private static Anchor? PickPart(IGameViewport viewport, float2 mouseViewport, bool reuseStockHover)
     {
 #if DEBUG
         using var perfScope = new PerfTracker.Scope("MapPicker.PickPart");
@@ -385,7 +382,7 @@ internal static class MapPicker
     // Circle mode: one click on a circular feature edge. Produces the fitted
     // center (carrying the circle plane normal) plus the ring point nearest the
     // hit, both as part anchors; radius/diameter derive live from the pair.
-    public static bool PickCircle(Viewport viewport, float2 mouseViewport, out Anchor? center, out Anchor? rim, bool reuseStockHover = false)
+    public static bool PickCircle(IGameViewport viewport, float2 mouseViewport, out Anchor? center, out Anchor? rim, bool reuseStockHover = false)
     {
 #if DEBUG
         using var perfScope = new PerfTracker.Scope("MapPicker.PickCircle");
@@ -437,7 +434,7 @@ internal static class MapPicker
 
     // FaceAngle mode: the raw surface hit only; snapping to points would move
     // the sample off the face whose normal is being measured.
-    private static Anchor? PickFaceAngle(Viewport viewport, float2 mouseViewport, bool reuseStockHover)
+    private static Anchor? PickFaceAngle(IGameViewport viewport, float2 mouseViewport, bool reuseStockHover)
     {
         var unusedFeature = new FeatureCandidate();
         if (!TryGetMeshHit(viewport, mouseViewport, scanFeatures: false, reuseStockHover, ref unusedFeature,
@@ -751,7 +748,7 @@ internal static class MapPicker
     // the live cursor, so a placement click (a GLFW callback ahead of that update)
     // would land on the previous frame's target. One scan computes the projected
     // center and disc radius for every body instead.
-    private static Anchor? PickBody(Viewport viewport, float2 mouseViewport)
+    private static Anchor? PickBody(IViewport viewport, float2 mouseViewport)
     {
 #if DEBUG
         using var perfScope = new PerfTracker.Scope("MapPicker.PickBody");
@@ -780,6 +777,8 @@ internal static class MapPicker
         // disc whenever it wins here. Without this gate, every comet and asteroid in
         // the system is a snap target even when nothing marks it on screen, and free
         // placement becomes nearly impossible in a dense system.
+        // Both writes sit inside IOrbiter.OnDrawUi's ShowCelestialNames() branch, so
+        // with names off this tier holds stars only, which is what the view marks.
         Astronomical? nearest = null;
         float nearestDist = CenterSnapRadiusPx;
 
@@ -859,7 +858,7 @@ internal static class MapPicker
     // this runs it on the main thread per preview frame and per click. The math is
     // closed-form per orbit, but if a dense save ever shows up in the PerfTracker
     // numbers, this is the place to optimize.
-    private static Anchor? PickOrbitPoint(Viewport viewport, float2 mouseViewport)
+    private static Anchor? PickOrbitPoint(IViewport viewport, float2 mouseViewport)
     {
 #if DEBUG
         using var perfScope = new PerfTracker.Scope("MapPicker.PickOrbitPoint");
@@ -925,7 +924,7 @@ internal static class MapPicker
     // Keep the candidate if it is on screen near the cursor and beats the best so
     // far. Shared by the three orbit-candidate sources (flight-plan patches, the burn
     // plan, celestial orbits), all of which produce a nullable CelestialPosition.
-    private static void TryAccept(CelestialPosition? candidate, Astronomical owner, Camera camera, Viewport viewport,
+    private static void TryAccept(CelestialPosition? candidate, Astronomical owner, Camera camera, IViewport viewport,
         float2 mouseViewport, ref OrbitCandidate best)
     {
         if (candidate.HasValue
@@ -946,7 +945,7 @@ internal static class MapPicker
     // camera. Such a candidate also distorts IsBetterThan, which projects with
     // ignoreBehind: false and can score the mirrored position deceptively close,
     // shadowing real candidates. The hyperbolic branch guards its own samples.
-    private static bool IsOnScreenNearCursor(CelestialPosition candidate, Camera camera, Viewport viewport, float2 mouseViewport)
+    private static bool IsOnScreenNearCursor(CelestialPosition candidate, Camera camera, IViewport viewport, float2 mouseViewport)
     {
         float2 s = candidate.Point.GetPositionScreen(candidate.Parent, camera);
         if (float.IsNaN(s.X) || float.IsNaN(s.Y) || float.IsInfinity(s.X) || float.IsInfinity(s.Y))
@@ -961,7 +960,7 @@ internal static class MapPicker
     // verified against orbit-point CCE offsets in-game (Earth's orbit has tiny Z,
     // Hale-Bopp at 89 deg inclination has huge Z). Camera.UpView = (0,1,0) is the
     // camera-up convention, NOT the ecliptic normal.
-    public static bool TryGetFreePlane(Viewport viewport, bool eclipticPlane, out double3 planePointEcl, out double3 normalEcl, out Astronomical? refBody)
+    public static bool TryGetFreePlane(IViewport viewport, bool eclipticPlane, out double3 planePointEcl, out double3 normalEcl, out Astronomical? refBody)
     {
         planePointEcl = default;
         normalEcl = default;
@@ -990,7 +989,7 @@ internal static class MapPicker
         return true;
     }
 
-    private static Anchor? PickFreePoint(Viewport viewport, float2 mouseViewport, bool eclipticPlane)
+    private static Anchor? PickFreePoint(IViewport viewport, float2 mouseViewport, bool eclipticPlane)
     {
         if (!TryGetFreePlane(viewport, eclipticPlane, out double3 planePoint, out double3 normal, out Astronomical? refBody))
             return null;

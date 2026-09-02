@@ -5,10 +5,10 @@ using KSA;
 namespace MeasureTools.Core;
 
 /// <summary>
-/// Label-and-control rows built on the game's ConsoleWidgets. The tool window
-/// derives from the stock ImGuiWindow, which draws the console shell and pushes
-/// the console widget style around DrawContent, so the content lays out through
-/// the same widgets rather than raw ImGui.
+/// Label-and-control rows on the game's ConsoleWidgets, so the window lays out like
+/// the stock consoles rather than raw ImGui. It does not set UseConsoleChrome, so
+/// nothing pushes the console widget style around DrawContent; the widgets style
+/// themselves through ConsoleWidgets.BeginRowCore.
 /// </summary>
 internal static class ConsoleUi
 {

@@ -14,7 +14,7 @@ public sealed class Mod
 {
     private static Harmony? _harmony;
 
-    private const string TestedGameVersion = "v2026.8.22.5348";
+    private const string TestedGameVersion = "v2026.9.4.5400";
 
     [StarMapAllModsLoaded]
     public void OnFullyLoaded()
@@ -26,6 +26,7 @@ public sealed class Mod
                 $"[MeasureTools] Tested against {TestedGameVersion}, current is {gameVersion}. " +
                 "Some features may not work correctly.");
 
+        GameReflection.LogDriftIfUnavailable();
         MeasureColors.Load();
 
         _harmony = new Harmony("com.maxi.measuretools");
@@ -33,6 +34,7 @@ public sealed class Mod
         // stop the other from being patched.
         ApplyPatch(typeof(Patch_MenuBar), "Measure menu");
         ApplyPatch(typeof(Patch_MouseButton), "mouse intercept");
+        ApplyPatch(typeof(Patch_LoadSave), "save load reset");
 
         DefaultCategory.Log.Info("[MeasureTools] Loaded.");
     }
@@ -52,9 +54,8 @@ public sealed class Mod
         }
     }
 
-    // Runs every frame after KSA's own ImGui, while the frame is still active:
-    // prune stale state first so neither the window nor the overlay ever resolves
-    // an anchor whose body was removed, then the tool window, then the map overlay.
+    // Prune first, so neither the window nor the overlay resolves an anchor whose
+    // body is gone.
     [StarMapAfterGui]
     public void Draw(double dt)
     {
@@ -64,15 +65,14 @@ public sealed class Mod
             using var perfScope = new PerfTracker.Scope("Mod.Draw");
 #endif
             MeasureState.Prune();
-            Viewport viewport = Program.MainViewport;
+            if (!MeasureViewport.TryGetActive(out IGameViewport viewport))
+                return;
             MeasureWindow.DrawActive(viewport);
             MeasureOverlay.Draw(viewport);
         }
         catch (Exception ex)
         {
-            // Spam control for this per-frame path: the first exception of each type
-            // logs a full stack via {ex}, then stays quiet. Two different sites that
-            // throw the same type share one log line, which is the accepted tradeoff.
+            // Per-frame path: first throw of each type logs a stack, then quiet.
             LogHelper.ErrorOnce("aftergui-" + ex.GetType().Name, $"[MeasureTools] Per-frame draw failed: {ex}");
         }
     }
@@ -90,6 +90,7 @@ public sealed class Mod
         MeasureOverlay.Reset();
         MeshFeatureCache.Reset();
         Patch_MouseButton.Reset();
+        DebugConfig.Reset();
         LogHelper.Reset();
 #if DEBUG
         PerfTracker.Reset();

@@ -57,7 +57,7 @@ internal static class MeasureOverlay
         _previewEclipticFree = false;
     }
 
-    public static void Draw(Viewport viewport)
+    public static void Draw(IGameViewport viewport)
     {
         try
         {
@@ -73,7 +73,7 @@ internal static class MeasureOverlay
 
             Camera camera = viewport.GetCamera();
             float2 vpPos = viewport.Position;
-            ImDrawListPtr dl = viewport.Index == 0 ? ImGui.GetBackgroundDrawList() : ImGui.GetWindowDrawList();
+            ImDrawListPtr dl = ImGuiHelper.GetOverlayDrawList(viewport);
 
             for (int i = 0; i < MeasureState.Measurements.Count; i++)
                 DrawMeasurement(dl, camera, vpPos, MeasureState.Measurements[i], i == MeasureState.HighlightIndex);
@@ -82,9 +82,7 @@ internal static class MeasureOverlay
         }
         catch (Exception ex)
         {
-            // Spam control for this per-frame path: the first exception of each type
-            // logs a full stack via {ex}, then stays quiet. Two different sites that
-            // throw the same type share one log line, which is the accepted tradeoff.
+            // Per-frame path: first throw of each type logs a stack, then quiet.
             LogHelper.ErrorOnce("overlay-" + ex.GetType().Name, $"[MeasureTools] Overlay draw failed: {ex}");
         }
     }
@@ -389,13 +387,12 @@ internal static class MeasureOverlay
     // The hover preview while armed: the snap highlight under the cursor, the
     // rubber-band line(s) from the pending points with a live value, and the
     // construction plane when the cursor would place a free point.
-    private static void DrawPlacementPreview(ImDrawListPtr dl, Camera camera, Viewport viewport, float2 vpPos)
+    private static void DrawPlacementPreview(ImDrawListPtr dl, Camera camera, IGameViewport viewport, float2 vpPos)
     {
 #if DEBUG
         using var perfScope = new PerfTracker.Scope("MeasureOverlay.DrawPlacementPreview");
 #endif
-        var io = ImGui.GetIO();
-        if (!MeasureState.IsArmed || io.WantCaptureMouse)
+        if (!MeasureState.IsArmed || ImGui.GetIO().WantCaptureMouse)
         {
             // Not previewing (tool disarmed or cursor over UI): drop the cache so the
             // first frame back over the view picks fresh.
@@ -403,7 +400,7 @@ internal static class MeasureOverlay
             return;
         }
 
-        float2 mouseViewport = io.MousePos - vpPos;
+        float2 mouseViewport = Cursor.GetPosition(viewport);
         // A cursor outside the viewport cannot place a point, and a cursor that
         // left the OS window reports far outside it; either way picking over
         // that position is wasted work.
@@ -416,7 +413,7 @@ internal static class MeasureOverlay
         // Ctrl previews (and places) a free point on the ecliptic plane even where
         // snapping would win; a modifier change re-picks immediately so the preview
         // flips with the key.
-        bool eclipticFree = io.KeyCtrl;
+        bool eclipticFree = ImGui.GetIO().KeyCtrl;
         long now = Stopwatch.GetTimestamp();
         if (Stopwatch.GetElapsedTime(_previewLastPickTimestamp, now).TotalMilliseconds >= PreviewPickIntervalMs
             || _previewStateVersion != MeasureState.StateVersion
@@ -545,7 +542,7 @@ internal static class MeasureOverlay
         }
     }
 
-    private static void DrawSnapHighlight(ImDrawListPtr dl, Camera camera, Viewport viewport, float2 vpPos, float2 cursor, Anchor preview, bool eclipticPlane)
+    private static void DrawSnapHighlight(ImDrawListPtr dl, Camera camera, IViewport viewport, float2 vpPos, float2 cursor, Anchor preview, bool eclipticPlane)
     {
         switch (preview.Kind)
         {
@@ -656,7 +653,7 @@ internal static class MeasureOverlay
     // A faint disc in the construction plane (center at the plane anchor, radius
     // scaled to the view depth) plus a spoke to the previewed point, so the user
     // sees where free points will land and how the plane is tilted.
-    private static void DrawConstructionPlane(ImDrawListPtr dl, Camera camera, Viewport viewport, float2 vpPos, float2 cursor, bool eclipticPlane)
+    private static void DrawConstructionPlane(ImDrawListPtr dl, Camera camera, IViewport viewport, float2 vpPos, float2 cursor, bool eclipticPlane)
     {
         if (!MapPicker.TryGetFreePlane(viewport, eclipticPlane, out double3 planePoint, out double3 normal, out _))
             return;

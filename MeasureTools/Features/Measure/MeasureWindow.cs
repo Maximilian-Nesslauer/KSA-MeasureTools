@@ -34,7 +34,7 @@ internal sealed class MeasureWindow : ImGuiWindow
 
     // Draw the window if it exists and is shown. Does not create the instance, so
     // the draw hook never touches ImGui state before the user first opens the tool.
-    public static void DrawActive(Viewport viewport)
+    public static void DrawActive(IGameViewport viewport)
     {
         if (_instance == null || !_instance.IsShown)
             return;
@@ -108,7 +108,21 @@ internal sealed class MeasureWindow : ImGuiWindow
         }
     }
 
-    public override void DrawContent(Viewport viewport)
+    // The stock shell wraps this call in no finally, so an escaping throw would leave
+    // ImGui.Begin unmatched and the style stack pushed for the rest of the frame.
+    public override void DrawContent(IViewport viewport)
+    {
+        try
+        {
+            DrawContentCore(viewport);
+        }
+        catch (Exception ex)
+        {
+            LogHelper.ErrorOnce("window-" + ex.GetType().Name, $"[MeasureTools] Window draw failed: {ex}");
+        }
+    }
+
+    private void DrawContentCore(IViewport viewport)
     {
         if (Universe.CurrentSystem == null)
         {
@@ -206,7 +220,7 @@ internal sealed class MeasureWindow : ImGuiWindow
         }
     }
 
-    private void DrawSnappingSection(Viewport viewport)
+    private void DrawSnappingSection(IViewport viewport)
     {
         // Snap and the reference body only apply to ruler/protractor picking;
         // surface mode ray-casts the celestial spheres, circle and face-angle
@@ -342,7 +356,7 @@ internal sealed class MeasureWindow : ImGuiWindow
     private Astronomical? _autoPreviewBody;
     private string _autoPreviewText = "Auto (none)";
 
-    private void DrawReferenceCombo(Viewport viewport)
+    private void DrawReferenceCombo(IViewport viewport)
     {
         Astronomical? auto = MeasureState.ReferenceOverride == null
             ? MeasureState.ResolveReferenceBody(viewport)
@@ -370,7 +384,7 @@ internal sealed class MeasureWindow : ImGuiWindow
         ImGui.EndCombo();
     }
 
-    private void DrawStatus(Viewport viewport)
+    private void DrawStatus(IViewport viewport)
     {
         if (!MeasureState.IsSupportedViewMode(viewport.Mode))
             return;

@@ -15,4 +15,16 @@ internal static class DebugConfig
     public static bool Measure = false;
     public static bool Performance = false;
 #endif
+
+    // The DEBUG window writes these at runtime.
+    public static void Reset()
+    {
+#if DEBUG
+        Measure = true;
+        Performance = true;
+#else
+        Measure = false;
+        Performance = false;
+#endif
+    }
 }

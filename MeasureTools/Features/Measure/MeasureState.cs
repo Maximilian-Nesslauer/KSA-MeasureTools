@@ -56,12 +56,13 @@ internal static class MeasureState
     public static bool ToolActive = true;
 
     // The tool captures clicks only while its window is open, the tool is not
-    // paused, and the main viewport is in a supported view.
+    // paused, and the viewport it lives in is in a supported view.
     public static bool IsArmed =>
         ToolActive
         && MeasureWindow.IsOpen
         && Universe.CurrentSystem != null
-        && IsSupportedViewMode(Program.MainViewport.Mode);
+        && MeasureViewport.TryGetActive(out IGameViewport viewport)
+        && IsSupportedViewMode(viewport.Mode);
 
     // The camera modes the tool operates in. Map is the orbital map; Orbit is the
     // default flight camera that follows the focused body or vehicle. Both navigate
@@ -309,7 +310,7 @@ internal static class MeasureState
     // Otherwise the construction plane would sit at the parent, often millions of
     // metres away, and a free point placed near the vehicle would land at that
     // distance instead of under the cursor.
-    public static Astronomical? ResolveReferenceBody(Viewport viewport)
+    public static Astronomical? ResolveReferenceBody(IViewport viewport)
     {
         if (ReferenceOverride != null)
             return ReferenceOverride;
