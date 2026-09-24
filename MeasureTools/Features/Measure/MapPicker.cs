@@ -850,14 +850,14 @@ internal static class MapPicker
         return Anchor.AtSurface(body, dir * body.MeanRadius);
     }
 
-    // Nearest point on any visible orbit line, mirroring the candidate set of the
-    // stock burn-click picker (CelestialSystem.SetNearestOrbitPoint): flight-plan
-    // patches and burn-plan orbits for shown vehicles, plain orbits for shown
-    // celestials. Unlike stock, results are used for every body, not only the
-    // controlled vehicle. Stock runs the same scan per frame on a worker thread;
-    // this runs it on the main thread per preview frame and per click. The math is
-    // closed-form per orbit, but if a dense save ever shows up in the PerfTracker
-    // numbers, this is the place to optimize.
+    // Nearest point on any visible orbit line, with the candidate set of the stock
+    // burn-click picker (CelestialSystem.SetNearestOrbitPoint) and its
+    // OrbitHoverCandidate.Wins comparison: flight-plan patches and burn-plan orbits
+    // for shown vehicles, plain orbits for shown celestials. Unlike stock, results
+    // are used for every body, not only the controlled vehicle. Stock runs the same
+    // scan per frame on a worker thread; this runs it on the main thread per preview
+    // frame and per click. The math is closed-form per orbit, but if a dense save
+    // ever shows up in the PerfTracker numbers, this is the place to optimize.
     private static Anchor? PickOrbitPoint(IViewport viewport, float2 mouseViewport)
     {
 #if DEBUG
@@ -867,8 +867,9 @@ internal static class MapPicker
         if (system == null)
             return null;
         Camera camera = viewport.GetCamera();
+        UniverseTime now = Universe.GetElapsedTime();
 
-        var best = default(OrbitCandidate);
+        OrbitHoverCandidate? best = null;
 
         foreach (Astronomical astronomical in system.All.AsSpan())
         {
@@ -878,7 +879,10 @@ internal static class MapPicker
             {
                 if (!vehicle.ShowOrbit && !vehicle.TargetOfControlledVehicle && Program.ControlledVehicle != vehicle)
                     continue;
-                var patches = vehicle.FlightPlan.Patches;
+                FlightPlan flightPlan = vehicle.FlightPlan;
+                BurnPlan burnPlan = vehicle.BurnPlan;
+                UniverseTime branchEnd = burnPlan.FindBranchEndTime(-1);
+                List<PatchedConic> patches = flightPlan.Patches;
                 for (int i = patches.Count - 1; i >= 0; i--)
                 {
                     PatchedConic patch = patches[i];
@@ -887,12 +891,14 @@ internal static class MapPicker
                     // SetNearestOrbitPoint; matching it keeps the candidate sets identical.
                     if (!Astronomical.ShouldDrawUiOrLines(patch.PrimaryBody, viewport, patch.Orbit))
                         continue;
-                    if (patch.Orbit.GetNearestPosition(viewport, mouseViewport, patch, out CelestialPosition? pos, spliceVehicleFromNow: false))
-                        TryAccept(pos, vehicle, camera, viewport, mouseViewport, ref best);
+                    if (patch.Orbit.GetNearestPosition(viewport, mouseViewport, patch, out CelestialPosition? pos, spliceVehicleFromNow: false)
+                        && pos is { } p)
+                    {
+                        TryAccept(new OrbitHoverCandidate(p, vehicle, flightPlan.HoveredMarker, p.IsReachedWithin(now, branchEnd)),
+                            camera, viewport, mouseViewport, ref best);
+                    }
                 }
-                CelestialPosition? burnPos = null;
-                if (vehicle.FlightComputer.BurnPlan.GetNearestOrbitPoint(viewport, mouseViewport, ref burnPos))
-                    TryAccept(burnPos, vehicle, camera, viewport, mouseViewport, ref best);
+                AcceptBurnPoints(vehicle, burnPlan, camera, viewport, mouseViewport, ref best);
             }
             else if (astronomical is Celestial celestial)
             {
@@ -900,40 +906,58 @@ internal static class MapPicker
                     continue;
                 if (!Astronomical.ShouldDrawLines(astronomical, viewport, celestial.Orbit))
                     continue;
-                if (celestial.Orbit.GetNearestPosition(viewport, mouseViewport, null, out CelestialPosition? pos, spliceVehicleFromNow: false))
-                    TryAccept(pos, celestial, camera, viewport, mouseViewport, ref best);
+                if (celestial.Orbit.GetNearestPosition(viewport, mouseViewport, null, out CelestialPosition? pos, spliceVehicleFromNow: false)
+                    && pos is { } p)
+                {
+                    TryAccept(new OrbitHoverCandidate(p, celestial, HoversMarker: false, IsReached: true),
+                        camera, viewport, mouseViewport, ref best);
+                }
             }
         }
 
-        if (!best.Position.HasValue || best.Owner == null)
+        if (best is not { } winner)
             return null;
-        CelestialPosition cp = best.Position.Value;
-        return Anchor.OnOrbit(cp.Parent, cp.Point.PositionCce, best.Owner.Id);
+        return Anchor.OnOrbit(winner.Position.Parent, winner.Position.Point.PositionCce, winner.Owner.Id);
     }
 
-    // The best orbit-line candidate so far. The owner travels with the point because
-    // stock's IsBetterThan breaks a near-tie in screen distance by camera depth and,
-    // at equal depth, by the owner's radius (HoverRanking), so comparing two
-    // candidates needs both their orbiters.
-    private struct OrbitCandidate
+    // The burn branches as BurnPlan.FindNearestBurnPoint scans them. Each patch is
+    // validated on its own, because Wins ranks reached and earlier patches of one
+    // owner above cursor proximity, so a single stock pick behind the camera would
+    // hide every visible branch.
+    private static void AcceptBurnPoints(Vehicle vehicle, BurnPlan burnPlan, Camera camera, IViewport viewport,
+        float2 mouseViewport, ref OrbitHoverCandidate? best)
     {
-        public CelestialPosition? Position;
-        public Astronomical? Owner;
-    }
-
-    // Keep the candidate if it is on screen near the cursor and beats the best so
-    // far. Shared by the three orbit-candidate sources (flight-plan patches, the burn
-    // plan, celestial orbits), all of which produce a nullable CelestialPosition.
-    private static void TryAccept(CelestialPosition? candidate, Astronomical owner, Camera camera, IViewport viewport,
-        float2 mouseViewport, ref OrbitCandidate best)
-    {
-        if (candidate.HasValue
-            && IsOnScreenNearCursor(candidate.Value, camera, viewport, mouseViewport)
-            && candidate.Value.IsBetterThan(camera, mouseViewport, best.Position,
-                owner.MeanRadius, best.Owner?.MeanRadius ?? 0.0))
+        bool hovered = burnPlan.IsHovered();
+        for (int b = 0; b < burnPlan.BurnCount; b++)
         {
-            best.Position = candidate;
-            best.Owner = owner;
+            if (!burnPlan.TryGetBurn(b, out Burn? burn) || burn == null
+                || (!burn.Vehicle.ShowOrbit && !burn.Vehicle.TargetOfControlledVehicle))
+                continue;
+            UniverseTime branchEnd = burn.ParentDepartureBurn ? UniverseTime.EndOfTime : burnPlan.FindBranchEndTime(b);
+            float grabRadius = BurnContextMenu.GetGrabRadiusPercent(burn.Vehicle);
+            List<PatchedConic> patches = burn.FlightPlan.Patches;
+            for (int i = patches.Count - 1; i >= 0; i--)
+            {
+                PatchedConic patch = patches[i];
+                if (!Astronomical.ShouldDrawUiOrLines(patch.PrimaryBody, viewport, patch.Orbit))
+                    continue;
+                if (patch.Orbit.GetNearestPosition(viewport, mouseViewport, patch, out CelestialPosition? pos, spliceVehicleFromNow: false, grabRadius)
+                    && pos is { } p)
+                {
+                    TryAccept(new OrbitHoverCandidate(p, vehicle, hovered, p.IsReachedWithin(burn.Time, branchEnd)),
+                        camera, viewport, mouseViewport, ref best);
+                }
+            }
+        }
+    }
+
+    private static void TryAccept(in OrbitHoverCandidate candidate, Camera camera, IViewport viewport,
+        float2 mouseViewport, ref OrbitHoverCandidate? best)
+    {
+        if (IsOnScreenNearCursor(candidate.Position, camera, viewport, mouseViewport)
+            && candidate.Wins(in best, camera, mouseViewport))
+        {
+            best = candidate;
         }
     }
 
@@ -942,7 +966,8 @@ internal static class MapPicker
     // NaN (the screen projection drops behind-camera points), its NDC distance check
     // evaluates to (NaN > threshold) == false, and the bogus point is ACCEPTED, e.g.
     // a click near Earth grabbing a point on the Uranus orbit plane behind the
-    // camera. Such a candidate also distorts IsBetterThan, which projects with
+    // camera. Such a candidate also distorts the cursor-proximity step of
+    // OrbitHoverCandidate.Wins (OrbitPointCce.IsBetterThan), which projects with
     // ignoreBehind: false and can score the mirrored position deceptively close,
     // shadowing real candidates. The hyperbolic branch guards its own samples.
     private static bool IsOnScreenNearCursor(CelestialPosition candidate, Camera camera, IViewport viewport, float2 mouseViewport)
