@@ -7,6 +7,7 @@ using HarmonyLib;
 using KSA;
 using MeasureTools.Core;
 using MeasureTools.Features.Measure;
+using RenderCore.Input;
 
 namespace MeasureTools.Patches;
 
@@ -64,8 +65,24 @@ internal static class Patch_MouseButton
         return editor != null && (editor.GizmoGrabbed || (editor.Highlighted?.Grabbed ?? false));
     }
 
+    // The original dispatches a bound mouse button as a key event before any world
+    // click. Contains is the widest test a stock handler applies, so a press with
+    // extra modifiers still counts as bound.
+    private static bool IsBoundInput(GlfwWindow window, GlfwMouseButton button, GlfwButtonAction action, GlfwModifier mods)
+    {
+        if (!Input.MouseBound(button))
+            return false;
+        var keyEvent = new GlfwKeyEvent(window, action, button, mods);
+        foreach (InputAction inputAction in EnumCollections.InputActions.Values)
+        {
+            if (Input.Contains(in keyEvent, inputAction))
+                return true;
+        }
+        return false;
+    }
+
     [HarmonyPrefix]
-    private static bool Prefix(GlfwMouseButton button, GlfwButtonAction action, GlfwModifier mods)
+    private static bool Prefix(GlfwWindow window, GlfwMouseButton button, GlfwButtonAction action, GlfwModifier mods)
     {
         try
         {
@@ -86,6 +103,10 @@ internal static class Patch_MouseButton
                     return false;
                 }
             }
+            else if (button == GlfwMouseButton.Number2 && action == GlfwButtonAction.Press)
+            {
+                _rightPressPending = false;
+            }
 
             if (!MeasureState.IsArmed)
             {
@@ -96,11 +117,19 @@ internal static class Patch_MouseButton
             }
             // InputViewport is what the original tests: a press latches its viewport
             // for the whole sequence, so a release still belongs to where the drag
-            // started. Not ours means another viewport (see MeasureViewport) or ImGui
-            // holding the mouse, where the original ignores the click anyway.
+            // started. Not ours means another viewport (see MeasureViewport), or a
+            // click the original serves before any world click: an open popup, ImGui
+            // holding the mouse, or a user binding on this button. The tool consumes a
+            // release only after it handled the press, so a bound action always gets
+            // its release.
             IGameViewport inputViewport = Program.InputViewport;
-            if (!MeasureViewport.IsHost(inputViewport) || ImGui.GetIO().WantCaptureMouse)
+            if (!MeasureViewport.IsHost(inputViewport)
+                || Popup.AnyOpen
+                || ImGui.GetIO().WantCaptureMouse
+                || IsBoundInput(window, button, action, mods))
+            {
                 return true;
+            }
             if (button == GlfwMouseButton.Number1 && EditorHoldsDrag())
                 return true;
 

@@ -65,7 +65,8 @@ Protractor, Surface, Circle, Face angle) and click in the view to place points. 
 IVA cameras steer with the left mouse button, so the tool stays inactive there to
 leave their controls untouched. While the tool is armed it owns left clicks, so
 editor part placement is suspended; pause the tool (short right-click) or close
-the window to build normally.
+the window to build normally. A click that matches a mouse binding from the game's
+control settings is left to the game, so the tool does not place a point for it.
 
 | Input | Action |
 | --- | --- |
