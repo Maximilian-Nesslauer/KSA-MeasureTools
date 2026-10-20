@@ -17,12 +17,12 @@
       <HintPath>..\..\..\refs\game\KSA.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="Brutal.Core.Numerics">
-      <HintPath>..\..\..\refs\game\Brutal.Core.Numerics.dll</HintPath>
+    <Reference Include="Brutal.Numerics">
+      <HintPath>..\..\..\refs\game\Brutal.Numerics.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="Brutal.Core.Logging">
-      <HintPath>..\..\..\refs\game\Brutal.Core.Logging.dll</HintPath>
+    <Reference Include="Brutal.Logging">
+      <HintPath>..\..\..\refs\game\Brutal.Logging.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Brutal.ImGui">
@@ -41,8 +41,8 @@
       <Private>false</Private>
     </Reference>
     <!-- ImInputString / ImGui.InputText surface the Ptr type from here. -->
-    <Reference Include="Brutal.Core.Common">
-      <HintPath>..\..\..\refs\game\Brutal.Core.Common.dll</HintPath>
+    <Reference Include="Brutal.Core">
+      <HintPath>..\..\..\refs\game\Brutal.Core.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <!-- Core.SpanBuilder, which the overlay composes multi-part labels with and
@@ -52,8 +52,8 @@
       <Private>false</Private>
     </Reference>
     <!-- Add more game DLL references as needed:
-    <Reference Include="Brutal.Core.Strings">
-      <HintPath>..\..\..\refs\game\Brutal.Core.Strings.dll</HintPath>
+    <Reference Include="Brutal.Strings">
+      <HintPath>..\..\..\refs\game\Brutal.Strings.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="CommunityToolkit.HighPerformance">
