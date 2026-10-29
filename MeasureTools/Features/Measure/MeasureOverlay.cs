@@ -625,7 +625,7 @@ internal static class MeasureOverlay
             if (Valid(s))
                 dl.AddCircleFilled(in s, 8f, FeatureDotColor);
         }
-        for (int i = 0; i < fullPart.Connectors.Count; i++)
+        for (int i = 0; i < fullPart.Connectors.Length; i++)
         {
             float2 s = vpPos + camera.EgoToScreen(fullPart.Connectors[i].PositionEgo(in matrixVehicleAsmb2Ego));
             if (Valid(s))

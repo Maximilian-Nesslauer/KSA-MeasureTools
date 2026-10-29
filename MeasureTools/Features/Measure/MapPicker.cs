@@ -540,13 +540,13 @@ internal static class MapPicker
         // bounding-box fallback below.
         const double minOpposingConnectorDot = -0.9;
         double bestDot = minOpposingConnectorDot;
-        for (int i = 0; i < part.Connectors.Count; i++)
+        for (int i = 0; i < part.Connectors.Length; i++)
         {
             Part.Connector a = part.Connectors[i];
             if ((a.Flags & (Part.Connector.Flag.ToSurface | Part.Connector.Flag.FromSurface)) != 0)
                 continue;
             double3 facingA = new double3(1.0, 0.0, 0.0).Transform(a.Asmb2ParentAsmb);
-            for (int j = i + 1; j < part.Connectors.Count; j++)
+            for (int j = i + 1; j < part.Connectors.Length; j++)
             {
                 Part.Connector b = part.Connectors[j];
                 if ((b.Flags & (Part.Connector.Flag.ToSurface | Part.Connector.Flag.FromSurface)) != 0)
@@ -632,7 +632,7 @@ internal static class MapPicker
                     }
                 }
             }
-            for (int j = 0; j < part.Connectors.Count; j++)
+            for (int j = 0; j < part.Connectors.Length; j++)
             {
                 Part.Connector connector = part.Connectors[j];
                 float2 s = camera.EgoToScreen(connector.PositionEgo(in matrixVehicleAsmb2Ego));
