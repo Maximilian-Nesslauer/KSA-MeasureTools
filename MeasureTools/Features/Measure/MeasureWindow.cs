@@ -55,6 +55,17 @@ internal sealed class MeasureWindow : ImGuiWindow
         _instance = null;
     }
 
+    // Opens the window when it is hidden and closes it when it is shown. Both the
+    // Measure menu and the StarMap Mods menu call this from the menu bar hook, so an
+    // ImGui frame is active when the first call creates the instance.
+    public static void ToggleWindow()
+    {
+        if (IsOpen)
+            Instance.Close();
+        else
+            Instance.Open();
+    }
+
     public void Open()
     {
         _show = true;

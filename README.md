@@ -2,7 +2,7 @@
 
 Click-to-measure ruler and protractor tools for [Kitten Space Agency](https://ahwoo.com/app/100000/kitten-space-agency).
 
-This mod is written against the [StarMap loader](https://github.com/StarMapLoader/StarMap).
+This mod is written against the [StarMap loader](https://github.com/StarMapLoader/StarMap) and needs StarMap 0.5.0 or later.
 
 Validated against KSA build version 2026.11.10.5801.
 
@@ -40,8 +40,7 @@ Validated against KSA build version 2026.11.10.5801.
 - **Editor measuring** - the ruler and protractor also work inside the vehicle
   editor, with the same part-level snapping (attach nodes, part centers, mesh
   vertices, hull points) over the craft being built, including parts currently
-  held in the hand. Open it from the new top-level **Measure** menu in the editor
-  menu bar. Anchors follow parts as they are dragged, so a measurement updates
+  held in the hand. Open it from **Mods -> Measure**. Anchors follow parts as they are dragged, so a measurement updates
   live while building, and part measurements carry across the editor boundary in
   both directions: measure in flight and refine in the editor, or measure while
   building and keep the numbers through launch. Points on a part disappear when
@@ -59,8 +58,8 @@ Validated against KSA build version 2026.11.10.5801.
 
 ## Usage
 
-In the map view or the default flight view, open **View -> Measure**; in the vehicle
-editor, open **Measure -> Show Window** from the menu bar. Pick a tool (Ruler,
+In the map view, the default flight view, and the vehicle editor, open
+**Mods -> Measure** in the menu bar to open and close the window. Pick a tool (Ruler,
 Protractor, Surface, Circle, Face angle) and click in the view to place points. The free-fly and
 IVA cameras steer with the left mouse button, so the tool stays inactive there to
 leave their controls untouched. While the tool is armed it owns left clicks, so
@@ -85,7 +84,7 @@ resume. Measurements are not saved to the save file; closing the window clears t
 
 ## Installation
 
-1. Install [StarMap](https://github.com/StarMapLoader/StarMap).
+1. Install [StarMap](https://github.com/StarMapLoader/StarMap) 0.5.0 or later.
 2. Download the latest release from the [GitHub Releases](https://github.com/Maximilian-Nesslauer/KSA-MeasureTools/releases) tab or from [SpaceDock](https://spacedock.info/mod/4319/MeasureTools).
 3. Extract into `Documents\My Games\Kitten Space Agency\mods\MeasureTools\`.
 4. The game auto-discovers new mods and prompts you to enable them. Alternatively, add to `Documents\My Games\Kitten Space Agency\manifest.toml`:
@@ -108,7 +107,7 @@ Required only to build the mod from source. Targets **.NET 10**.
 
 | Package | Source | Tested Version |
 | --- | --- | --- |
-| [StarMap.API](https://github.com/StarMapLoader/StarMap) | NuGet | 0.3.6 |
+| [StarMap.API](https://github.com/StarMapLoader/StarMap) | NuGet | 0.5.2 |
 | [Lib.Harmony](https://www.nuget.org/packages/Lib.Harmony) | NuGet | 2.4.2 |
 
 ## Mod compatibility

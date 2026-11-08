@@ -6,6 +6,7 @@ using Brutal.Logging;
 using HarmonyLib;
 using KSA;
 using StarMap.API;
+using StarMap.API.Services;
 
 namespace MeasureTools;
 
@@ -15,6 +16,14 @@ public sealed class Mod
     private static Harmony? _harmony;
 
     private const string TestedGameVersion = "v2026.11.10.5801";
+
+    private readonly IModMenuService _modMenu;
+    private IDisposable? _modMenuItem;
+
+    public Mod(IModMenuService modMenu)
+    {
+        _modMenu = modMenu;
+    }
 
     [StarMapAllModsLoaded]
     public void OnFullyLoaded()
@@ -32,9 +41,19 @@ public sealed class Mod
         _harmony = new Harmony("com.maxi.measuretools");
         // Apply each patch on its own so a future game change to one target does not
         // stop the other from being patched.
-        ApplyPatch(typeof(Patch_MenuBar), "Measure menu");
         ApplyPatch(typeof(Patch_MouseButton), "mouse intercept");
         ApplyPatch(typeof(Patch_LoadSave), "save load reset");
+
+        // StarMap throws when another mod already uses the label, and the tool has
+        // no menu entry then.
+        try
+        {
+            _modMenuItem = _modMenu.AddModMenuItem("Measure", MeasureWindow.ToggleWindow);
+        }
+        catch (Exception ex)
+        {
+            LogHelper.ErrorOnce("mods-menu", $"[MeasureTools] Failed to add the Mods menu item: {ex}");
+        }
 
         DefaultCategory.Log.Info("[MeasureTools] Loaded.");
     }
@@ -82,6 +101,8 @@ public sealed class Mod
     {
         _harmony?.UnpatchAll(_harmony.Id);
         _harmony = null;
+        _modMenuItem?.Dispose();
+        _modMenuItem = null;
 
         MeasureColors.SaveIfDirty();
         MeasureColors.Reset();
