@@ -119,12 +119,14 @@ internal static class Patch_MouseButton
             // for the whole sequence, so a release still belongs to where the drag
             // started. Not ours means another viewport (see MeasureViewport), or a
             // click the original serves before any world click: an open popup, ImGui
-            // holding the mouse, or a user binding on this button. The tool consumes a
-            // release only after it handled the press, so a bound action always gets
-            // its release.
+            // holding the mouse, a part pick of the game (PartPicking, for example the
+            // life support transfer target), or a user binding on this button. The tool
+            // consumes a release only after it handled the press, so a bound action
+            // always gets its release.
             IGameViewport inputViewport = Program.InputViewport;
             if (!MeasureViewport.IsHost(inputViewport)
                 || Popup.AnyOpen
+                || PartPicking.IsActive
                 || ImGui.GetIO().WantCaptureMouse
                 || IsBoundInput(window, button, action, mods))
             {
