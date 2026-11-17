@@ -717,8 +717,10 @@ internal static class MapPicker
         bool found = false;
         for (int i = 0; i < edges.Length; i++)
         {
-            float2 a = camera.EgoToScreen(edges[i].A.Transform(matrixAsmb2Ego));
-            float2 b = camera.EgoToScreen(edges[i].B.Transform(matrixAsmb2Ego));
+            double3 aEgo = edges[i].A.Transform(matrixAsmb2Ego);
+            double3 bEgo = edges[i].B.Transform(matrixAsmb2Ego);
+            float2 a = camera.EgoToScreen(aEgo);
+            float2 b = camera.EgoToScreen(bEgo);
             if (float.IsNaN(a.X) || float.IsNaN(a.Y) || float.IsNaN(b.X) || float.IsNaN(b.Y))
                 continue;
             float2 ab = b - a;
@@ -733,8 +735,14 @@ internal static class MapPicker
             float d = float2.Distance(closest, mouseViewport);
             if (d < bestDist)
             {
+                double wA = camera.EgoToClip(aEgo).W;
+                double wB = camera.EgoToClip(bEgo).W;
+                if (!double.IsFinite(wA) || !double.IsFinite(wB) || wA * wB <= 0)
+                    continue;
+                // Camera.ClipToNdc divides by W, so a screen parameter needs perspective correction before 3D interpolation.
+                double worldT = t * wA / ((1.0 - t) * wB + t * wA);
                 bestDist = d;
-                edgePointLocal = edges[i].A + (edges[i].B - edges[i].A) * t;
+                edgePointLocal = edges[i].A + (edges[i].B - edges[i].A) * worldT;
                 found = true;
             }
         }
