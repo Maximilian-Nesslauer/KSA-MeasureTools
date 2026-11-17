@@ -405,6 +405,8 @@ internal static class MapPicker
         for (int i = 0; i < features.Circles.Length; i++)
         {
             MeshFeatureCache.CircleFeature circle = features.Circles[i];
+            if (!MeasurementGeometry.PreservesCircle(circle.Normal, matrixAsmb2Ego))
+                continue;
             // The ring point nearest the hit, in the subpart frame.
             double3 d = hit.LocalPos - circle.Center;
             double3 planar = d - circle.Normal * double3.Dot(d, circle.Normal);

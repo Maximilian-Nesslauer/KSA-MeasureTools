@@ -59,10 +59,12 @@ internal sealed class Measurement
         return (deg + 360.0) % 360.0;
     }
 
-    // Circle mode: Anchors[0] is the fitted center, Anchors[1] a rim point; both
-    // live on the part, so the radius survives re-homing and part scale.
+    // Anchors[0] is the fitted center and Anchors[1] is a rim point.
+    // Recheck the live transform because an editor change can turn the circle into an ellipse.
     public double CircleRadiusMeters()
     {
+        if (!Anchors[0].PreservesCircle())
+            return double.NaN;
         return (Anchors[1].ResolveEcl() - Anchors[0].ResolveEcl()).Length();
     }
 
@@ -77,7 +79,7 @@ internal sealed class Measurement
     }
 
     // FaceAngle mode: angle between the two stored surface normals, resolved
-    // through the current part and vehicle rotations. 0 = parallel surfaces
+    // through the current part and vehicle transforms. 0 = parallel surfaces
     // facing the same way. NaN while either normal cannot resolve.
     public double FaceAngleRadians()
     {

@@ -131,25 +131,35 @@ internal sealed class Anchor
         return new double3(double.NaN, double.NaN, double.NaN);
     }
 
-    // The stored part-local normal rotated into ECL axes. Rotation-only chain
-    // (part scale is not applied), mirroring how the game transforms hit normals
-    // (VehicleEditor.TryComputeAttachedMountQuat rotates by Asmb2VehicleAsmb).
-    // Null when the anchor carries no normal or its owner is stale.
     public double3? ResolveNormalEcl()
     {
-        if (NormalPartAsmb == null || Part == null)
+        double4x4? transform = ResolvePartTransform();
+        return NormalPartAsmb != null && transform != null
+            ? MeasurementGeometry.TransformNormal(NormalPartAsmb.Value, transform.Value)
+            : null;
+    }
+
+    public bool PreservesCircle()
+    {
+        double4x4? transform = ResolvePartTransform();
+        return NormalPartAsmb != null && transform != null
+            && MeasurementGeometry.PreservesCircle(NormalPartAsmb.Value, transform.Value);
+    }
+
+    private double4x4? ResolvePartTransform()
+    {
+        if (Part == null)
             return null;
-        double3 normalVehicleAsmb = NormalPartAsmb.Value.Transform(Part.Asmb2VehicleAsmb);
         if (Kind == AnchorKind.EditorPartPoint)
         {
             VehicleEditor? editor = Program.Editor;
             if (editor == null)
                 return null;
-            return normalVehicleAsmb.Transform(editor.EditingSpace.Asmb2Ecl);
+            return Part.MatrixAsmb2VehicleAsmb * double4x4.CreateFromQuaternion(editor.EditingSpace.Asmb2Ecl);
         }
-        if (Body is not Vehicle vehicle)
+        if (Kind != AnchorKind.PartPoint || Body is not Vehicle vehicle)
             return null;
-        return normalVehicleAsmb.Transform(vehicle.Asmb2Ego);
+        return Part.MatrixAsmb2VehicleAsmb * double4x4.CreateFromQuaternion(vehicle.Asmb2Ego);
     }
 
     // A false result marks the anchor stale, not dead: for part anchors Prune
