@@ -5,7 +5,7 @@ namespace MeasureTools.Features.Measure;
 // The tool runs in the main viewport only, and this is the single place that says
 // so. ImGuiHelper.GetOverlayDrawList gives the persistent background list to no
 // other viewport (the rest draw their world UI inside their own ImGui window, long
-// closed by the time [StarMapAfterGui] runs), and they are built without
+// closed by the time the main viewport overlay runs), and they are built without
 // ViewportOptionFlags.AllowSelection, so stock does no part hover there either.
 internal static class MeasureViewport
 {

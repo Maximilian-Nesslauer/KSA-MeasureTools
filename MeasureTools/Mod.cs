@@ -43,6 +43,7 @@ public sealed class Mod
         // stop the other from being patched.
         ApplyPatch(typeof(Patch_MouseButton), "mouse intercept");
         ApplyPatch(typeof(Patch_LoadSave), "save load reset");
+        ApplyPatch(typeof(Patch_DrawUi), "measurement overlay");
 
         // StarMap throws when another mod already uses the label, and the tool has
         // no menu entry then.
@@ -75,11 +76,12 @@ public sealed class Mod
 
     // Prune first, so neither the window nor the overlay resolves an anchor whose
     // body is gone.
-    [StarMapAfterGui]
-    public void Draw(double dt)
+    internal static void Draw()
     {
         try
         {
+            if (!Program.DrawUI)
+                return;
 #if DEBUG
             using var perfScope = new PerfTracker.Scope("Mod.Draw");
 #endif
