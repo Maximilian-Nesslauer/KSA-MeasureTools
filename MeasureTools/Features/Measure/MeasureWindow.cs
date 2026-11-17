@@ -545,7 +545,10 @@ internal sealed class MeasureWindow : ImGuiWindow
         if (m.Mode == MeasureMode.Surface)
             return new string(DistanceReference.ToNearest(m.SurfaceDistanceMeters(), buffer));
         if (m.Mode == MeasureMode.Circle)
-            return "d " + new string(DistanceReference.ToNearest(m.CircleDiameterMeters(), buffer));
+        {
+            double diameter = m.CircleDiameterMeters();
+            return double.IsFinite(diameter) ? "d " + new string(DistanceReference.ToNearest(diameter, buffer)) : "undefined";
+        }
         if (m.Mode == MeasureMode.FaceAngle)
         {
             double faceAngle = m.FaceAngleRadians();
@@ -579,6 +582,8 @@ internal sealed class MeasureWindow : ImGuiWindow
             }
             case MeasureMode.Circle:
             {
+                if (!double.IsFinite(m.CircleRadiusMeters()))
+                    return "undefined (circle is distorted or unavailable)  (" + endpoints + ")";
                 string radius = new string(DistanceReference.ToNearest(m.CircleRadiusMeters(), buffer));
                 string circumference = new string(DistanceReference.ToNearest(m.CircleCircumferenceMeters(), buffer));
                 return value + ", r " + radius + ", C " + circumference + "  (" + endpoints + ")";

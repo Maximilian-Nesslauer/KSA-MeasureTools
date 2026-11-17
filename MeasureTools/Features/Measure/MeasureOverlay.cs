@@ -158,6 +158,9 @@ internal static class MeasureOverlay
     // part at any camera angle.
     private static void DrawCircleMeasurement(ImDrawListPtr dl, Camera camera, float2 vpPos, Measurement m, byte4 color, float thickness)
     {
+        double diameter = m.CircleDiameterMeters();
+        if (!double.IsFinite(diameter))
+            return;
         double3 centerEcl = m.Anchors[0].ResolveEcl();
         double3 rimEcl = m.Anchors[1].ResolveEcl();
         double3? normalEcl = m.Anchors[0].ResolveNormalEcl();
@@ -169,7 +172,7 @@ internal static class MeasureOverlay
         float2 rim = vpPos + camera.EclToScreen(rimEcl);
         float2 labelAnchor = Valid(rim) ? rim : center;
         if (Valid(labelAnchor))
-            LabelDiameter(dl, new float2(labelAnchor.X + 12f, labelAnchor.Y - 16f), m.CircleDiameterMeters());
+            LabelDiameter(dl, new float2(labelAnchor.X + 12f, labelAnchor.Y - 16f), diameter);
     }
 
     // FaceAngle measurement: dots on both sampled points, their surface normals
@@ -461,7 +464,7 @@ internal static class MeasureOverlay
         if (MeasureState.Mode == MeasureMode.Circle)
         {
             Anchor? circleCenter = _previewCacheSecondary;
-            if (circleCenter != null)
+            if (circleCenter != null && circleCenter.PreservesCircle())
             {
                 double3 centerEcl = circleCenter.ResolveEcl();
                 double3 rimEcl = preview.ResolveEcl();
