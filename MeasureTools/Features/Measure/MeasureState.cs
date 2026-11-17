@@ -55,10 +55,13 @@ internal static class MeasureState
     // plays normally while the measurements stay visible.
     public static bool ToolActive = true;
 
-    // The tool captures clicks only while its window is open, the tool is not
-    // paused, and the viewport it lives in is in a supported view.
+    // The tool captures clicks only while its window is open and drawn (F2 hides
+    // the UI through Program.DrawUI, and then the window and the preview are not
+    // drawn), the tool is not paused, and the viewport it lives in is in a
+    // supported view.
     public static bool IsArmed =>
         ToolActive
+        && Program.DrawUI
         && MeasureWindow.IsOpen
         && Universe.CurrentSystem != null
         && MeasureViewport.TryGetActive(out IGameViewport viewport)
