@@ -35,6 +35,7 @@ internal sealed class CircleChecks(Assembly candidate)
 
     private readonly Type _anchor = candidate.GetType(MeasureNamespace + "Anchor", throwOnError: true)!;
     private readonly Type _measurement = candidate.GetType(MeasureNamespace + "Measurement", throwOnError: true)!;
+    private readonly Camera _poseCamera = new(new int2(640, 480)) { PositionEcl = new double3(7, -11, 13) };
     private int _checks;
     private int _failures;
 
@@ -42,6 +43,7 @@ internal sealed class CircleChecks(Assembly candidate)
     {
         CheckFlightTranslation();
         CheckEditorTranslationAndScale();
+        CheckEqualLengthNonorthogonalTangents();
         CheckMixedFrames();
         Console.WriteLine(FormattableString.Invariant($"Circle checks: {_checks - _failures}/{_checks} passed."));
         return _failures == 0 ? 0 : 1;
@@ -64,9 +66,14 @@ internal sealed class CircleChecks(Assembly candidate)
             Near($"Flight sample {i} at Earth-scale translation", 6, Read(measurement, "CircleDiameterMeters"));
         }
 
-        double3 farPose = Invoke<double3>(center, "ResolveEcl");
+        SetPosition(vehicle, new double3(27, -14, 9));
+        var props = default(VehicleProperties);
+        props.TotalMassPropsAsmb.Offset = new float3(1.5f, -0.625f, 0.875f);
+        typeof(Vehicle).GetField("_props", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(vehicle, props);
+        double4x4 vehicleToEgo = vehicle.GetMatrixAsmb2Ego(_poseCamera);
+        Near("Flight anchor absolute pose matches the stock part matrix with nonzero center of mass",
+            0, (StockPointEcl(subpart, in vehicleToEgo, Center) - Invoke<double3>(center, "ResolveEcl")).Length());
         SetPosition(vehicle, double3.Zero);
-        Check("Flight anchor pose follows the vehicle", farPose.Equals(FarEcl + Invoke<double3>(center, "ResolveEcl")));
         object circle = Measure(center, FlightAnchor(vehicle, subpart, Center + Radius * new double3(1, 0, 0)));
         subpart.Scale = new double3(2, 2, 2);
         Near("Flight uses edited uniform scale for radius", 5, Read(circle, "CircleRadiusMeters"));
@@ -105,11 +112,14 @@ internal sealed class CircleChecks(Assembly candidate)
             object rim = EditorAnchor(subpart, Center + new double3(0, Radius, 0));
             measurement = Measure(center, rim);
             Near("Editor at origin", 6, Read(measurement, "CircleDiameterMeters"));
-            double3 before = Invoke<double3>(center, "ResolveEcl");
             editor.EditingSpace.PositionEcl = FarEcl;
             Near("Editor at Earth-scale translation", 6, Read(measurement, "CircleDiameterMeters"));
-            double3 after = Invoke<double3>(center, "ResolveEcl");
-            Check("Editor anchor pose follows editing space", after.Equals(FarEcl + before));
+            editor.EditingSpace.PositionEcl = new double3(31, 18, -4);
+            double4x4 editToEgo = editor.EditingSpace.GetMatrixAsmb2Ego(_poseCamera);
+            double3 editorEcl = StockPointEcl(subpart, in editToEgo, Center);
+            Near("Editor anchor absolute pose matches the stock editing-space and part matrices",
+                0, (editorEcl - Invoke<double3>(center, "ResolveEcl")).Length());
+            CheckFlightEditorFallback(subpart, center, editorEcl);
             editor.EditingSpace.PositionEcl = double3.Zero;
             subpart.Scale = new double3(0.5, 0.5, 3);
             Near("Editor uses current plane-uniform scale", 2.5, Read(measurement, "CircleDiameterMeters"));
@@ -121,6 +131,37 @@ internal sealed class CircleChecks(Assembly candidate)
             Game.Editor = null;
         }
         ExpectNaN("Closed editor leaves the old editor circle unresolved", measurement);
+    }
+
+    private void CheckEqualLengthNonorthogonalTangents()
+    {
+        Part parent = CreatePart(null, double3.Zero, new double3(2, 1, 1), 0);
+        Part subpart = CreatePart(parent, double3.Zero, new double3(1), Math.PI / 4);
+        double4x4 partToAssembly = subpart.MatrixAsmb2VehicleAsmb;
+        double3 u = double3.TransformNormal(double3.UnitX, partToAssembly);
+        double3 v = double3.TransformNormal(double3.UnitY, partToAssembly);
+        Near("First tangent has the expected length", Math.Sqrt(2.5), u.Length());
+        Near("Second tangent has the same length", Math.Sqrt(2.5), v.Length());
+        Near("Equal-length tangents have a nonzero dot product", 1.5, Math.Abs(double3.Dot(u, v)));
+
+        Vehicle vehicle = CreateVehicle();
+        object center = FlightAnchor(vehicle, subpart, Center, Normal);
+        object rim = FlightAnchor(vehicle, subpart, Center + Radius * double3.UnitX);
+        ExpectNaN("Equal lengths do not make nonorthogonal tangents a circle", Measure(center, rim));
+    }
+
+    private void CheckFlightEditorFallback(Part part, object editorCenter, double3 editorEcl)
+    {
+        Vehicle vehicle = CreateVehicle();
+        SetPosition(vehicle, new double3(-9, 17, 5));
+        double4x4 flightToEgo = vehicle.GetMatrixAsmb2Ego(_poseCamera);
+        double3 flightEcl = StockPointEcl(part, in flightToEgo, Center);
+        double expected = 2 * (flightEcl - editorEcl).Length();
+        Check("The same part and local point occupy distinct stock flight and editor poses", expected > 1);
+        Near("Flight center and editor rim use their respective poses", expected,
+            Read(Measure(FlightAnchor(vehicle, part, Center, Normal), EditorAnchor(part, Center)), "CircleDiameterMeters"));
+        Near("Editor center and flight rim use their respective poses", expected,
+            Read(Measure(editorCenter, FlightAnchor(vehicle, part, Center)), "CircleDiameterMeters"));
     }
 
     private void CheckMixedFrames()
@@ -159,6 +200,9 @@ internal sealed class CircleChecks(Assembly candidate)
         part.Asmb2ParentAsmb = doubleQuat.CreateFromAxisAngle(Normal, angle);
         return part;
     }
+
+    private double3 StockPointEcl(Part part, in double4x4 ownerToEgo, double3 local) =>
+        _poseCamera.EgoToEcl(local.Transform(part.MatrixAsmb2Ego(in ownerToEgo)));
 
     private object FlightAnchor(Vehicle owner, Part part, double3 local, double3? normal = null) =>
         _anchor.GetMethod("AtPartLocal")!.Invoke(null, [owner, part, local, "fixture", normal])!;
