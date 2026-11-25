@@ -63,9 +63,16 @@ internal sealed class Measurement
     // Recheck the live transform because an editor change can turn the circle into an ellipse.
     public double CircleRadiusMeters()
     {
-        if (!Anchors[0].PreservesCircle())
+        Anchor center = Anchors[0];
+        Anchor rim = Anchors[1];
+        if (!center.TryResolveCircleTransform(out double4x4 transform))
             return double.NaN;
-        return (Anchors[1].ResolveEcl() - Anchors[0].ResolveEcl()).Length();
+        if (center.Kind == rim.Kind && ReferenceEquals(center.Part, rim.Part) && ReferenceEquals(center.Body, rim.Body))
+        {
+            // A displacement avoids rounding each endpoint at the absolute ECL position.
+            return double3.TransformNormal(rim.OffsetPartAsmb - center.OffsetPartAsmb, transform).Length();
+        }
+        return (rim.ResolveEcl() - center.ResolveEcl()).Length();
     }
 
     public double CircleDiameterMeters()
