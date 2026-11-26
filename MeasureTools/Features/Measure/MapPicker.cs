@@ -339,16 +339,18 @@ internal static class MapPicker
         using var perfScope = new PerfTracker.Scope("MapPicker.PickPart");
 #endif
         var feature = new FeatureCandidate { ScreenDist = PartFeatureSnapRadiusPx };
-        bool hasHit = TryGetMeshHit(viewport, mouseViewport, MeasureState.PartFeatureSnapEnabled, reuseStockHover,
+        bool snapFeatures = MeasureState.PartFeatureSnapEnabled;
+        bool snapVertices = MeasureState.PartVertexSnapEnabled;
+        bool hasHit = TryGetMeshHit(viewport, mouseViewport, snapFeatures, reuseStockHover,
             ref feature, out Camera camera, out Vehicle? hitVehicle, out PartHit hit);
 
-        // The hit subpart's feature set is resolved once and threaded through the
-        // tiers that need it (rim centers, vertices/midpoints, edges).
-        MeshFeatureCache.MeshFeatures? hitFeatures = hasHit && hit.SubPart != null ? GetHitFeatures(in hit) : null;
+        MeshFeatureCache.MeshFeatures? hitFeatures = hasHit && hit.SubPart != null && (snapFeatures || snapVertices)
+            ? GetHitFeatures(in hit)
+            : null;
 
         // Rim centers and the mirror point need the hit subpart, so they join
         // the point-feature tier after the general scan.
-        if (hitFeatures != null && MeasureState.PartFeatureSnapEnabled)
+        if (hitFeatures != null && snapFeatures)
         {
             AddCircleCenterCandidates(camera, mouseViewport, hitVehicle, in hit, hitFeatures, ref feature);
             AddMirrorCandidate(camera, mouseViewport, hitVehicle, in hit, ref feature);
@@ -361,10 +363,10 @@ internal static class MapPicker
                 : MakePartAnchor(feature.Vehicle, feature.Part, feature.Position, feature.Label, feature.Normal);
         }
 
-        if (hitFeatures == null || hit.FullPart == null || hit.SubPart == null)
+        if (!hasHit || hit.FullPart == null || hit.SubPart == null)
             return null;
 
-        if (MeasureState.PartVertexSnapEnabled)
+        if (hitFeatures != null && snapVertices)
         {
             if (TryPickVertexOrMidpoint(camera, mouseViewport, hit.SubPart, in hit.Matrix, hitFeatures, out double3 pointLocal, out bool isMidpoint))
             {

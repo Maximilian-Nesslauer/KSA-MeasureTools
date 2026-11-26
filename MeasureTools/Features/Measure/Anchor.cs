@@ -139,11 +139,14 @@ internal sealed class Anchor
             : null;
     }
 
-    public bool PreservesCircle()
+    public bool PreservesCircle() => TryResolveCircleTransform(out _);
+
+    public bool TryResolveCircleTransform(out double4x4 transform)
     {
-        double4x4? transform = ResolvePartTransform();
-        return NormalPartAsmb != null && transform != null
-            && MeasurementGeometry.PreservesCircle(NormalPartAsmb.Value, transform.Value);
+        double4x4? partTransform = ResolvePartTransform();
+        transform = partTransform.GetValueOrDefault();
+        return NormalPartAsmb is double3 normal && partTransform.HasValue
+            && MeasurementGeometry.PreservesCircle(normal, transform);
     }
 
     private double4x4? ResolvePartTransform()
